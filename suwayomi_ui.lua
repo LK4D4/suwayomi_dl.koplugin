@@ -40,6 +40,37 @@ function SuwayomiUI.showSourcesMenu(sources, onSelectCallback)
     UIManager:show(menu)
 end
 
+function SuwayomiUI.showLanguageMenu(options)
+    local UIManager = require("ui/uimanager")
+    local menu_table = {}
+
+    for _, language in ipairs(options.languages or {}) do
+        table.insert(menu_table, {
+            text = string.format("%s %s", language.enabled and "[x]" or "[ ]", language.label),
+            callback = function()
+                if options.onToggle then
+                    options.onToggle(language.code, not language.enabled)
+                end
+            end,
+        })
+    end
+
+    table.insert(menu_table, {
+        text = _("Done"),
+        callback = function()
+            if options.onClose then
+                options.onClose()
+            end
+        end,
+    })
+
+    local menu = Menu:new{
+        title = _("Suwayomi source languages"),
+        item_table = menu_table,
+    }
+    UIManager:show(menu)
+end
+
 function SuwayomiUI.showLoginDialog(options)
     local credentials = options.credentials or {}
     local UIManager = require("ui/uimanager")

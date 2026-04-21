@@ -80,4 +80,19 @@ describe("suwayomi_settings", function()
         assert.are.equal("secret", stored_data.credentials.password)
         assert.are.equal("basic_auth", stored_data.credentials.auth_method)
     end)
+
+    it("loads source languages with english enabled by default", function()
+        local settings = require("suwayomi_settings")
+        local source_languages = settings:loadSourceLanguages()
+
+        assert.are.same({ "en" }, source_languages)
+    end)
+
+    it("saves source languages and flushes the settings file", function()
+        local settings = require("suwayomi_settings")
+        settings:saveSourceLanguages({ "en", "ru", "de" })
+
+        assert.is_true(flushed)
+        assert.are.same({ "en", "ru", "de" }, stored_data.source_languages)
+    end)
 end)

@@ -2,16 +2,26 @@ local SuwayomiAPI = {}
 local json = require("dkjson")
 
 local BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local DEBUG_LOG_PATH = "/storage/emulated/0/koreader/settings/suwayomi_debug.log"
+
+local function appendDebugLog(message)
+    local handle = io.open(DEBUG_LOG_PATH, "a")
+    if not handle then
+        return
+    end
+    handle:write(message, "\n")
+    handle:close()
+end
 
 local function base64Encode(input)
     local result = {}
-    local padding = (3 - (#input % 3)) % 3
-    input = input .. string.rep("\0", padding)
+    local index = 1
 
-    for index = 1, #input, 3 do
-        local a = input:byte(index)
-        local b = input:byte(index + 1)
-        local c = input:byte(index + 2)
+    while index <= #input do
+        local a = input:byte(index) or 0
+        local b = input:byte(index + 1) or 0
+        local c = input:byte(index + 2) or 0
+        local chunk_length = math.min(3, #input - index + 1)
         local value = a * 65536 + b * 256 + c
 
         local char1 = math.floor(value / 262144) % 64 + 1
@@ -21,15 +31,17 @@ local function base64Encode(input)
 
         table.insert(result, BASE64_ALPHABET:sub(char1, char1))
         table.insert(result, BASE64_ALPHABET:sub(char2, char2))
-        table.insert(result, padding >= 2 and "=" or BASE64_ALPHABET:sub(char3, char3))
-        table.insert(result, padding >= 1 and "=" or BASE64_ALPHABET:sub(char4, char4))
+        table.insert(result, chunk_length < 2 and "=" or BASE64_ALPHABET:sub(char3, char3))
+        table.insert(result, chunk_length < 3 and "=" or BASE64_ALPHABET:sub(char4, char4))
+
+        index = index + 3
     end
 
     return table.concat(result)
 end
 
 function SuwayomiAPI._buildSourcesQuery()
-    return '{"query": "query getSources { sources { id name } }"}'
+    return '{"query": "query getSources { sources { nodes { id name displayName lang } } }"}'
 end
 
 function SuwayomiAPI.buildBasicAuthHeader(username, password)
@@ -61,6 +73,7 @@ function SuwayomiAPI.parseSourcesResponse(response_body)
     local sources = payload
         and payload.data
         and payload.data.sources
+        and payload.data.sources.nodes
 
     if type(sources) ~= "table" then
         return nil, "Suwayomi server did not return a sources list."
@@ -70,7 +83,9 @@ function SuwayomiAPI.parseSourcesResponse(response_body)
     for _, source in ipairs(sources) do
         table.insert(parsed_sources, {
             id = tostring(source.id),
-            name = source.name or tostring(source.id),
+            name = source.displayName or ((source.name or tostring(source.id)) .. (source.lang and source.lang ~= "" and source.lang ~= "localsourcelang" and (" (" .. string.upper(source.lang) .. ")") or "")),
+            raw_name = source.name,
+            lang = source.lang,
         })
     end
 
@@ -99,7 +114,7 @@ function SuwayomiAPI.fetchSources(credentials)
     local headers = SuwayomiAPI.buildRequestHeaders(credentials)
     headers["Content-Length"] = tostring(#request_body)
 
-    local _, code = client.request{
+    local ok, code = client.request{
         url = SuwayomiAPI.buildGraphQLEndpoint(credentials.server_url),
         method = "POST",
         headers = headers,
@@ -107,10 +122,15 @@ function SuwayomiAPI.fetchSources(credentials)
         sink = ltn12.sink.table(response_chunks),
     }
 
+    appendDebugLog(string.format("fetchSources url=%s ok=%s code=%s code_type=%s", credentials.server_url, tostring(ok), tostring(code), type(code)))
+
     local response_body = table.concat(response_chunks)
     if code == 200 then
+        appendDebugLog("fetchSources received HTTP 200")
         local sources, parse_error = SuwayomiAPI.parseSourcesResponse(response_body)
         if not sources then
+            appendDebugLog("fetchSources parse error: " .. tostring(parse_error))
+            appendDebugLog("fetchSources success body: " .. tostring(response_body))
             return {
                 ok = false,
                 error = parse_error,
@@ -122,12 +142,30 @@ function SuwayomiAPI.fetchSources(credentials)
         }
     end
 
+    if not ok then
+        appendDebugLog("fetchSources transport failure: " .. tostring(code))
+        return {
+            ok = false,
+            error = "Could not reach the Suwayomi server: " .. tostring(code),
+        }
+    end
+
+    if type(code) ~= "number" then
+        appendDebugLog("fetchSources non-numeric status: " .. tostring(code))
+        return {
+            ok = false,
+            error = "Could not reach the Suwayomi server: " .. tostring(code),
+        }
+    end
+
     local error_message = {
         [401] = "Authentication failed.",
         [403] = "Authentication failed.",
         [404] = "Suwayomi GraphQL endpoint not found.",
     }
 
+    appendDebugLog("fetchSources HTTP status: " .. tostring(code))
+    appendDebugLog("fetchSources response body: " .. tostring(response_body))
     return {
         ok = false,
         error = error_message[code] or "Could not reach the Suwayomi server.",

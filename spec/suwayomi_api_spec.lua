@@ -14,12 +14,17 @@ describe("suwayomi_api", function()
     it("should build correct GraphQL query for sources", function()
         local query = api._buildSourcesQuery()
         assert.truthy(query:match("query getSources"))
-        assert.truthy(query:match("sources { id name }"))
+        assert.truthy(query:match("sources { nodes { id name displayName lang } }"))
     end)
 
     it("builds a basic auth header from credentials", function()
         local header = api.buildBasicAuthHeader("alice", "s3cret")
         assert.are.equal("Basic YWxpY2U6czNjcmV0", header)
+    end)
+
+    it("builds a basic auth header for longer credentials", function()
+        local header = api.buildBasicAuthHeader("suwayomi", "EfQDeSAHD8NktUWX6nb9")
+        assert.are.equal("Basic c3V3YXlvbWk6RWZRRGVTQUhEOE5rdFVXWDZuYjk=", header)
     end)
 
     it("builds request headers for basic auth settings", function()
@@ -37,10 +42,12 @@ describe("suwayomi_api", function()
         local response = [[
             {
                 "data": {
-                    "sources": [
-                        {"id": "1", "name": "MangaDex"},
-                        {"id": "2", "name": "ComicK"}
-                    ]
+                    "sources": {
+                        "nodes": [
+                            {"id": "1", "name": "MangaDex", "displayName": "MangaDex (EN)", "lang": "en"},
+                            {"id": "2", "name": "ComicK", "lang": "fr"}
+                        ]
+                    }
                 }
             }
         ]]
@@ -48,8 +55,8 @@ describe("suwayomi_api", function()
         local sources = api.parseSourcesResponse(response)
 
         assert.are.same({
-            { id = "1", name = "MangaDex" },
-            { id = "2", name = "ComicK" },
+            { id = "1", name = "MangaDex (EN)", raw_name = "MangaDex", lang = "en" },
+            { id = "2", name = "ComicK (FR)", raw_name = "ComicK", lang = "fr" },
         }, sources)
     end)
 
@@ -76,7 +83,7 @@ describe("suwayomi_api", function()
                 sink = {
                     table = function(target)
                         return function(chunk)
-                            table.insert(target, [[{"data":{"sources":[]}}]])
+                            table.insert(target, [[{"data":{"sources":{"nodes":[]}}}]])
                         end
                     end,
                 },
@@ -117,7 +124,7 @@ describe("suwayomi_api", function()
                 sink = {
                     table = function(target)
                         return function(chunk)
-                            table.insert(target, [[{"data":{"sources":[]}}]])
+                            table.insert(target, [[{"data":{"sources":{"nodes":[]}}}]])
                         end
                     end,
                 },
@@ -133,5 +140,75 @@ describe("suwayomi_api", function()
 
         assert.is_true(result.ok)
         assert.are.equal("http://suwayomi.example/api/graphql", requested_url)
+    end)
+
+    it("surfaces transport errors from the HTTP client", function()
+        package.preload["ssl.https"] = function()
+            return {
+                request = function(_)
+                    return nil, "certificate verify failed"
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value)
+                        return value
+                    end,
+                },
+                sink = {
+                    table = function(_target)
+                        return function(_chunk) end
+                    end,
+                },
+            }
+        end
+
+        local result = api.fetchSources({
+            server_url = "https://suwayomi.example/",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        })
+
+        assert.is_false(result.ok)
+        assert.are.equal("Could not reach the Suwayomi server: certificate verify failed", result.error)
+    end)
+
+    it("surfaces non-http status strings from the HTTP client", function()
+        package.preload["ssl.https"] = function()
+            return {
+                request = function(_)
+                    return 1, "closed"
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value)
+                        return value
+                    end,
+                },
+                sink = {
+                    table = function(_target)
+                        return function(_chunk) end
+                    end,
+                },
+            }
+        end
+
+        local result = api.fetchSources({
+            server_url = "https://suwayomi.example/",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        })
+
+        assert.is_false(result.ok)
+        assert.are.equal("Could not reach the Suwayomi server: closed", result.error)
     end)
 end)

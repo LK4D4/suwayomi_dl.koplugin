@@ -2,6 +2,14 @@
 
 A KOReader plugin that allows you to browse and asynchronously download manga from your self-hosted [Suwayomi (Tachidesk)](https://github.com/Suwayomi/Suwayomi-Server) server directly to your e-ink device.
 
+## Development Status
+
+This plugin is experimental and still under active development.
+
+- Expect rough edges and incomplete features.
+- The login flow and source browsing are currently implemented and being tested.
+- Manga browsing, chapter browsing, and downloads are not complete yet.
+
 ## Features
 - Native KOReader UI integration
 - Browse sources, manga, and chapters directly from the server

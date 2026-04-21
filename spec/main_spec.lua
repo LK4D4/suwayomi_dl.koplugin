@@ -4,6 +4,7 @@ describe("suwayomi plugin", function()
     local registered_actions
     local registered_menu_plugin
     local login_dialog_options
+    local language_menu_options
     local shown_messages
     local shown_sources
 
@@ -11,6 +12,7 @@ describe("suwayomi plugin", function()
         registered_actions = {}
         registered_menu_plugin = nil
         login_dialog_options = nil
+        language_menu_options = nil
         shown_messages = {}
         shown_sources = nil
 
@@ -98,8 +100,10 @@ describe("suwayomi plugin", function()
                     return {
                         ok = true,
                         sources = {
-                            { id = "1", name = "MangaDex" },
-                            { id = "2", name = "ComicK" },
+                            { id = "1", name = "MangaDex (EN)", lang = "en" },
+                            { id = "2", name = "MangaDex (RU)", lang = "ru" },
+                            { id = "3", name = "ComicK (DE)", lang = "de" },
+                            { id = "4", name = "Local source", lang = "localsourcelang" },
                         },
                     }
                 end,
@@ -111,6 +115,9 @@ describe("suwayomi plugin", function()
                 showDirectoryChooser = function() end,
                 showLoginDialog = function(options)
                     login_dialog_options = options
+                end,
+                showLanguageMenu = function(options)
+                    language_menu_options = options
                 end,
                 showSourcesMenu = function(sources)
                     shown_sources = sources
@@ -126,11 +133,18 @@ describe("suwayomi plugin", function()
                         username = "alice",
                         password = "secret",
                         auth_method = "basic_auth",
+                        source_languages = { "en", "ru" },
                     }
                 end,
                 save = function(_, credentials)
                     login_dialog_options.saved_credentials = credentials
                     return credentials
+                end,
+                loadSourceLanguages = function()
+                    return { "en", "ru" }
+                end,
+                saveSourceLanguages = function(_, languages)
+                    return languages
                 end,
             }
         end
@@ -179,7 +193,7 @@ describe("suwayomi plugin", function()
         assert.is_table(menu_items.suwayomi_dl)
         assert.are.equal("Suwayomi", menu_items.suwayomi_dl.text)
         assert.are.equal("search", menu_items.suwayomi_dl.sorting_hint)
-        assert.are.equal(3, #menu_items.suwayomi_dl.sub_item_table)
+        assert.are.equal(4, #menu_items.suwayomi_dl.sub_item_table)
     end)
 
     it("opens the login dialog with persisted credentials", function()
@@ -224,8 +238,9 @@ describe("suwayomi plugin", function()
         menu_items.suwayomi_dl.sub_item_table[1].callback()
 
         assert.are.same({
-            { id = "1", name = "MangaDex" },
-            { id = "2", name = "ComicK" },
+            { id = "1", name = "MangaDex (EN)", lang = "en" },
+            { id = "2", name = "MangaDex (RU)", lang = "ru" },
+            { id = "4", name = "Local source", lang = "localsourcelang" },
         }, shown_sources)
     end)
 
@@ -251,5 +266,21 @@ describe("suwayomi plugin", function()
         menu_items.suwayomi_dl.sub_item_table[1].callback()
 
         assert.are.equal("Authentication failed.", shown_messages[#shown_messages])
+    end)
+
+    it("opens the language setup menu with the configured languages checked", function()
+        local plugin_class = require("main")
+        local menu_items = {}
+        local plugin = plugin_class{}
+
+        plugin:addToMainMenu(menu_items)
+        menu_items.suwayomi_dl.sub_item_table[3].callback()
+
+        assert.is_table(language_menu_options)
+        assert.are.equal("en", language_menu_options.languages[1].code)
+        assert.are.equal("EN", language_menu_options.languages[1].label)
+        assert.are.equal(true, language_menu_options.languages[1].enabled)
+        assert.are.equal(true, language_menu_options.languages[2].enabled)
+        assert.are.equal(false, language_menu_options.languages[3].enabled)
     end)
 end)

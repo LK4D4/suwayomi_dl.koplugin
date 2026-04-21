@@ -8,6 +8,14 @@ local SuwayomiUI = require("suwayomi_ui")
 local _ = require("gettext")
 local T = require("ffi/util").template
 
+local SOURCE_LANGUAGE_OPTIONS = {
+    { code = "en", label = "EN" },
+    { code = "ru", label = "RU" },
+    { code = "de", label = "DE" },
+    { code = "es", label = "ES" },
+    { code = "fr", label = "FR" },
+}
+
 local SuwayomiPlugin = WidgetContainer:extend{
     name = "suwayomi_dl",
     is_doc_only = false,
@@ -53,6 +61,74 @@ function SuwayomiPlugin:showLoginDialog()
     })
 end
 
+function SuwayomiPlugin:buildSourceLanguageSet(source_languages)
+    local selected = {}
+    for _, lang in ipairs(source_languages or {}) do
+        selected[lang] = true
+    end
+    return selected
+end
+
+function SuwayomiPlugin:filterSourcesByLanguage(sources)
+    local selected = self:buildSourceLanguageSet(SuwayomiSettings:loadSourceLanguages())
+    local filtered = {}
+
+    for _, source in ipairs(sources or {}) do
+        if source.lang == "localsourcelang" or selected[source.lang] then
+            table.insert(filtered, source)
+        end
+    end
+
+    return filtered
+end
+
+function SuwayomiPlugin:showSourceLanguageDialog()
+    local selected = self:buildSourceLanguageSet(SuwayomiSettings:loadSourceLanguages())
+
+    SuwayomiUI.showLanguageMenu({
+        languages = (function()
+            local languages = {}
+            for _, language in ipairs(SOURCE_LANGUAGE_OPTIONS) do
+                table.insert(languages, {
+                    code = language.code,
+                    label = language.label,
+                    enabled = selected[language.code] == true,
+                })
+            end
+            return languages
+        end)(),
+        onToggle = function(code, enabled)
+            if enabled then
+                selected[code] = true
+            else
+                selected[code] = nil
+            end
+
+            local saved_languages = {}
+            for _, language in ipairs(SOURCE_LANGUAGE_OPTIONS) do
+                if selected[language.code] then
+                    table.insert(saved_languages, language.code)
+                end
+            end
+
+            SuwayomiSettings:saveSourceLanguages(saved_languages)
+            self:showSourceLanguageDialog()
+        end,
+        onClose = function()
+            local saved_languages = SuwayomiSettings:loadSourceLanguages()
+            local labels = {}
+            local selected_lookup = self:buildSourceLanguageSet(saved_languages)
+            for _, language in ipairs(SOURCE_LANGUAGE_OPTIONS) do
+                if selected_lookup[language.code] then
+                    table.insert(labels, language.label)
+                end
+            end
+            local summary = #labels > 0 and table.concat(labels, ", ") or _("none")
+            self:showMessage(T(_("Suwayomi source languages saved: %1"), summary))
+        end,
+    })
+end
+
 function SuwayomiPlugin:browseSuwayomi()
     local credentials = SuwayomiSettings:load()
     if credentials.server_url == "" then
@@ -66,7 +142,13 @@ function SuwayomiPlugin:browseSuwayomi()
         return
     end
 
-    SuwayomiUI.showSourcesMenu(result.sources, function(source)
+    local filtered_sources = self:filterSourcesByLanguage(result.sources)
+    if #filtered_sources == 0 then
+        self:showMessage(_("No Suwayomi sources match the selected languages."))
+        return
+    end
+
+    SuwayomiUI.showSourcesMenu(filtered_sources, function(source)
         self:showNotImplemented(T(_("Source selected: %1"), source.name))
     end)
 end
@@ -86,6 +168,12 @@ function SuwayomiPlugin:addToMainMenu(menu_items)
                 text = _("Setup login information"),
                 callback = function()
                     self:showLoginDialog()
+                end
+            },
+            {
+                text = _("Setup source languages"),
+                callback = function()
+                    self:showSourceLanguageDialog()
                 end
             },
             {

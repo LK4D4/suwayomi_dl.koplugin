@@ -13,6 +13,8 @@ local DEFAULT_CREDENTIALS = {
     auth_method = "basic_auth",
 }
 
+local DEFAULT_SOURCE_LANGUAGES = { "en" }
+
 local function copyTable(source)
     local target = {}
     for key, value in pairs(source) do
@@ -57,6 +59,20 @@ function SuwayomiSettings:save(credentials)
     }
 
     self:open():saveSetting("credentials", normalized):flush()
+    return normalized
+end
+
+function SuwayomiSettings:loadSourceLanguages()
+    return self:open():readSetting("source_languages", copyTable(DEFAULT_SOURCE_LANGUAGES))
+end
+
+function SuwayomiSettings:saveSourceLanguages(source_languages)
+    local normalized = {}
+    for _, lang in ipairs(source_languages or {}) do
+        table.insert(normalized, lang)
+    end
+
+    self:open():saveSetting("source_languages", normalized):flush()
     return normalized
 end
 
