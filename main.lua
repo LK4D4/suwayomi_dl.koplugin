@@ -6,6 +6,7 @@ local SuwayomiAPI = require("suwayomi_api")
 local SuwayomiSettings = require("suwayomi_settings")
 local SuwayomiUI = require("suwayomi_ui")
 local _ = require("gettext")
+local T = require("ffi/util").template
 
 local SuwayomiPlugin = WidgetContainer:extend{
     name = "suwayomi_dl",
@@ -46,7 +47,7 @@ function SuwayomiPlugin:showLoginDialog()
         onSave = function(credentials)
             local saved_credentials = SuwayomiSettings:save(credentials)
             UIManager:nextTick(function()
-                self:showMessage(_("Suwayomi login settings saved for %1."):format(saved_credentials.server_url))
+                self:showMessage(T(_("Suwayomi login settings saved for %1."), saved_credentials.server_url))
             end)
         end,
     })
@@ -66,7 +67,7 @@ function SuwayomiPlugin:browseSuwayomi()
     end
 
     SuwayomiUI.showSourcesMenu(result.sources, function(source)
-        self:showNotImplemented(_("Source selected: %1"):format(source.name))
+        self:showNotImplemented(T(_("Source selected: %1"), source.name))
     end)
 end
 
@@ -91,7 +92,7 @@ function SuwayomiPlugin:addToMainMenu(menu_items)
                 text = _("Setup download directory"),
                 callback = function()
                     SuwayomiUI.showDirectoryChooser(function(path)
-                        self:showNotImplemented(_("Selected download directory: %1"):format(path))
+                        self:showNotImplemented(T(_("Selected download directory: %1"), path))
                     end)
                 end
             }

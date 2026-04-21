@@ -16,6 +16,7 @@ describe("suwayomi plugin", function()
 
         package.loaded.main = nil
         package.loaded.dispatcher = nil
+        package.loaded["ffi/util"] = nil
         package.loaded.gettext = nil
         package.loaded["ui/uimanager"] = nil
         package.loaded["ui/widget/infomessage"] = nil
@@ -41,10 +42,26 @@ describe("suwayomi plugin", function()
             end
         end
 
+        package.preload["ffi/util"] = function()
+            return {
+                template = function(template_string, ...)
+                    local result = template_string
+                    local values = {...}
+                    for index, value in ipairs(values) do
+                        result = result:gsub("%%" .. index, tostring(value))
+                    end
+                    return result
+                end,
+            }
+        end
+
         package.preload["ui/uimanager"] = function()
             return {
                 show = function(_, widget)
                     table.insert(shown_messages, widget.text)
+                end,
+                nextTick = function(_, callback)
+                    callback()
                 end,
             }
         end
@@ -113,6 +130,7 @@ describe("suwayomi plugin", function()
                 end,
                 save = function(_, credentials)
                     login_dialog_options.saved_credentials = credentials
+                    return credentials
                 end,
             }
         end
@@ -122,6 +140,7 @@ describe("suwayomi plugin", function()
 
     after_each(function()
         package.preload.dispatcher = nil
+        package.preload["ffi/util"] = nil
         package.preload.gettext = nil
         package.preload["ui/uimanager"] = nil
         package.preload["ui/widget/infomessage"] = nil
@@ -176,6 +195,24 @@ describe("suwayomi plugin", function()
         assert.are.equal("alice", login_dialog_options.credentials.username)
         assert.are.equal("secret", login_dialog_options.credentials.password)
         assert.are.equal("basic_auth", login_dialog_options.credentials.auth_method)
+    end)
+
+    it("formats the saved login message without crashing", function()
+        local plugin_class = require("main")
+        local menu_items = {}
+        local plugin = plugin_class{}
+
+        plugin:addToMainMenu(menu_items)
+        menu_items.suwayomi_dl.sub_item_table[2].callback()
+
+        login_dialog_options.onSave({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        })
+
+        assert.are.equal("Suwayomi login settings saved for https://suwayomi.example.", shown_messages[#shown_messages])
     end)
 
     it("loads sources and opens the sources menu when browse succeeds", function()
