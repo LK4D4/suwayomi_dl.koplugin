@@ -3,10 +3,16 @@ package.path = "?.lua;" .. package.path
 describe("suwayomi plugin", function()
     local registered_actions
     local registered_menu_plugin
+    local login_dialog_options
+    local shown_messages
+    local shown_sources
 
     local function reset_plugin_environment()
         registered_actions = {}
         registered_menu_plugin = nil
+        login_dialog_options = nil
+        shown_messages = {}
+        shown_sources = nil
 
         package.loaded.main = nil
         package.loaded.dispatcher = nil
@@ -14,7 +20,9 @@ describe("suwayomi plugin", function()
         package.loaded["ui/uimanager"] = nil
         package.loaded["ui/widget/infomessage"] = nil
         package.loaded["ui/widget/container/widgetcontainer"] = nil
+        package.loaded.suwayomi_api = nil
         package.loaded.suwayomi_ui = nil
+        package.loaded.suwayomi_settings = nil
 
         package.preload.dispatcher = function()
             return {
@@ -35,7 +43,9 @@ describe("suwayomi plugin", function()
 
         package.preload["ui/uimanager"] = function()
             return {
-                show = function() end,
+                show = function(_, widget)
+                    table.insert(shown_messages, widget.text)
+                end,
             }
         end
 
@@ -65,9 +75,45 @@ describe("suwayomi plugin", function()
             return WidgetContainer
         end
 
+        package.preload.suwayomi_api = function()
+            return {
+                fetchSources = function()
+                    return {
+                        ok = true,
+                        sources = {
+                            { id = "1", name = "MangaDex" },
+                            { id = "2", name = "ComicK" },
+                        },
+                    }
+                end,
+            }
+        end
+
         package.preload.suwayomi_ui = function()
             return {
                 showDirectoryChooser = function() end,
+                showLoginDialog = function(options)
+                    login_dialog_options = options
+                end,
+                showSourcesMenu = function(sources)
+                    shown_sources = sources
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return {
+                        server_url = "https://suwayomi.example",
+                        username = "alice",
+                        password = "secret",
+                        auth_method = "basic_auth",
+                    }
+                end,
+                save = function(_, credentials)
+                    login_dialog_options.saved_credentials = credentials
+                end,
             }
         end
     end
@@ -80,7 +126,9 @@ describe("suwayomi plugin", function()
         package.preload["ui/uimanager"] = nil
         package.preload["ui/widget/infomessage"] = nil
         package.preload["ui/widget/container/widgetcontainer"] = nil
+        package.preload.suwayomi_api = nil
         package.preload.suwayomi_ui = nil
+        package.preload.suwayomi_settings = nil
     end)
 
     it("registers a dispatcher action and main-menu entry on init", function()
@@ -113,5 +161,58 @@ describe("suwayomi plugin", function()
         assert.are.equal("Suwayomi", menu_items.suwayomi_dl.text)
         assert.are.equal("search", menu_items.suwayomi_dl.sorting_hint)
         assert.are.equal(3, #menu_items.suwayomi_dl.sub_item_table)
+    end)
+
+    it("opens the login dialog with persisted credentials", function()
+        local plugin_class = require("main")
+        local menu_items = {}
+        local plugin = plugin_class{}
+
+        plugin:addToMainMenu(menu_items)
+        menu_items.suwayomi_dl.sub_item_table[2].callback()
+
+        assert.is_table(login_dialog_options)
+        assert.are.equal("https://suwayomi.example", login_dialog_options.credentials.server_url)
+        assert.are.equal("alice", login_dialog_options.credentials.username)
+        assert.are.equal("secret", login_dialog_options.credentials.password)
+        assert.are.equal("basic_auth", login_dialog_options.credentials.auth_method)
+    end)
+
+    it("loads sources and opens the sources menu when browse succeeds", function()
+        local plugin_class = require("main")
+        local menu_items = {}
+        local plugin = plugin_class{}
+
+        plugin:addToMainMenu(menu_items)
+        menu_items.suwayomi_dl.sub_item_table[1].callback()
+
+        assert.are.same({
+            { id = "1", name = "MangaDex" },
+            { id = "2", name = "ComicK" },
+        }, shown_sources)
+    end)
+
+    it("shows a message when browse fails", function()
+        package.preload.suwayomi_api = function()
+            return {
+                fetchSources = function()
+                    return {
+                        ok = false,
+                        error = "Authentication failed.",
+                    }
+                end,
+            }
+        end
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+
+        local plugin_class = require("main")
+        local menu_items = {}
+        local plugin = plugin_class{}
+
+        plugin:addToMainMenu(menu_items)
+        menu_items.suwayomi_dl.sub_item_table[1].callback()
+
+        assert.are.equal("Authentication failed.", shown_messages[#shown_messages])
     end)
 end)
