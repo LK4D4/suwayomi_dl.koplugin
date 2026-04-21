@@ -244,6 +244,78 @@ describe("suwayomi plugin", function()
         }, shown_sources)
     end)
 
+    it("navigates from a source to a manga to a chapter placeholder", function()
+        local manga_shown
+        local chapter_shown
+
+        package.preload.suwayomi_api = function()
+            return {
+                fetchSources = function()
+                    return {
+                        ok = true,
+                        sources = {
+                            { id = "s1", name = "MangaDex", lang = "en" },
+                        },
+                    }
+                end,
+                fetchMangaForSource = function(_, source_id)
+                    assert.are.equal("s1", source_id)
+                    return {
+                        ok = true,
+                        manga = {
+                            { id = "m1", title = "One Piece" },
+                        },
+                    }
+                end,
+                fetchChaptersForManga = function(_, manga_id)
+                    assert.are.equal("m1", manga_id)
+                    return {
+                        ok = true,
+                        chapters = {
+                            { id = "c1", name = "Chapter 1" },
+                        },
+                    }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_ui = function()
+            return {
+                showSourcesMenu = function(sources, onSelect)
+                    onSelect(sources[1])
+                end,
+                showMangaMenu = function(manga, onSelect)
+                    manga_shown = manga
+                    onSelect(manga[1])
+                end,
+                showChapterMenu = function(chapters, onSelect)
+                    chapter_shown = chapters
+                    onSelect(chapters[1])
+                end,
+                showDirectoryChooser = function() end,
+                showLoginDialog = function() end,
+                showLanguageMenu = function() end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_ui = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+
+        plugin:browseSuwayomi()
+
+        assert.are.same({
+            { id = "m1", title = "One Piece" },
+        }, manga_shown)
+        assert.are.same({
+            { id = "c1", name = "Chapter 1" },
+        }, chapter_shown)
+        assert.are.equal("Download not implemented yet for Chapter 1", shown_messages[#shown_messages])
+    end)
+
     it("shows a message when browse fails", function()
         package.preload.suwayomi_api = function()
             return {

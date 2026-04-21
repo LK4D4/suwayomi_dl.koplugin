@@ -94,4 +94,80 @@ describe("suwayomi_ui", function()
         assert.are.same({"close", "save"}, events)
         assert.are.equal(shown_dialog, closed_dialog)
     end)
+
+    it("shows a manga menu", function()
+        local ui = require("suwayomi_ui")
+        local selected = {}
+
+        ui.showMangaMenu({
+            { id = "m1", title = "One Piece" },
+            { id = "m2", title = "Frieren" },
+        }, function(manga)
+            table.insert(selected, manga)
+        end)
+
+        assert.are.equal("Suwayomi Manga", shown_dialog.title)
+        assert.are.equal("One Piece", shown_dialog.item_table[1].text)
+        assert.are.equal("Frieren", shown_dialog.item_table[2].text)
+
+        shown_dialog.item_table[1].callback()
+        shown_dialog.item_table[2].callback()
+
+        assert.are.same({
+            { id = "m1", title = "One Piece" },
+            { id = "m2", title = "Frieren" },
+        }, selected)
+    end)
+
+    it("shows a chapter menu", function()
+        local ui = require("suwayomi_ui")
+        local selected = {}
+
+        ui.showChapterMenu({
+            { id = "c1", name = "Chapter 1" },
+            { id = "c2", name = "Chapter 2" },
+        }, function(chapter)
+            table.insert(selected, chapter)
+        end)
+
+        assert.are.equal("Suwayomi Chapters", shown_dialog.title)
+        assert.are.equal("Chapter 1", shown_dialog.item_table[1].text)
+        assert.are.equal("Chapter 2", shown_dialog.item_table[2].text)
+
+        shown_dialog.item_table[1].callback()
+        shown_dialog.item_table[2].callback()
+
+        assert.are.same({
+            { id = "c1", name = "Chapter 1" },
+            { id = "c2", name = "Chapter 2" },
+        }, selected)
+    end)
+
+    it("shows a sources menu", function()
+        local ui = require("suwayomi_ui")
+        local selected = {}
+
+        ui.showSourcesMenu({
+            { id = "s1", name = "MangaDex" },
+            { id = "s2", name = "ComicK" },
+            { id = "s3", name = "Local source" },
+        }, function(source)
+            table.insert(selected, source)
+        end)
+
+        assert.are.equal("Suwayomi Sources", shown_dialog.title)
+        assert.are.equal("MangaDex", shown_dialog.item_table[1].text)
+        assert.are.equal("ComicK", shown_dialog.item_table[2].text)
+        assert.are.equal("Local source", shown_dialog.item_table[3].text)
+
+        shown_dialog.item_table[1].callback()
+        shown_dialog.item_table[2].callback()
+        shown_dialog.item_table[3].callback()
+
+        assert.are.same({
+            { id = "s1", name = "MangaDex" },
+            { id = "s2", name = "ComicK" },
+            { id = "s3", name = "Local source" },
+        }, selected)
+    end)
 end)

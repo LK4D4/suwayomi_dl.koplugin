@@ -40,6 +40,44 @@ function SuwayomiUI.showSourcesMenu(sources, onSelectCallback)
     UIManager:show(menu)
 end
 
+function SuwayomiUI.showMangaMenu(manga_list, onSelectCallback)
+    local menu_table = {}
+    for _, manga in ipairs(manga_list) do
+        table.insert(menu_table, {
+            text = manga.title,
+            callback = function()
+                if onSelectCallback then onSelectCallback(manga) end
+            end
+        })
+    end
+
+    local menu = Menu:new{
+        title = _("Suwayomi Manga"),
+        item_table = menu_table,
+    }
+    local UIManager = require("ui/uimanager")
+    UIManager:show(menu)
+end
+
+function SuwayomiUI.showChapterMenu(chapter_list, onSelectCallback)
+    local menu_table = {}
+    for _, chapter in ipairs(chapter_list) do
+        table.insert(menu_table, {
+            text = chapter.name,
+            callback = function()
+                if onSelectCallback then onSelectCallback(chapter) end
+            end
+        })
+    end
+
+    local menu = Menu:new{
+        title = _("Suwayomi Chapters"),
+        item_table = menu_table,
+    }
+    local UIManager = require("ui/uimanager")
+    UIManager:show(menu)
+end
+
 function SuwayomiUI.showLanguageMenu(options)
     local UIManager = require("ui/uimanager")
     local menu_table = {}

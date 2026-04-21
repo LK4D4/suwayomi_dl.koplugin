@@ -3,6 +3,7 @@ local json = require("dkjson")
 
 local BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local DEBUG_LOG_PATH = "/storage/emulated/0/koreader/settings/suwayomi_debug.log"
+local performGraphQLRequest
 
 local function appendDebugLog(message)
     local handle = io.open(DEBUG_LOG_PATH, "a")
@@ -41,7 +42,9 @@ local function base64Encode(input)
 end
 
 function SuwayomiAPI._buildSourcesQuery()
-    return '{"query": "query getSources { sources { nodes { id name displayName lang } } }"}'
+    return json.encode({
+        query = "query getSources { sources { nodes { id name displayName lang } } }",
+    })
 end
 
 function SuwayomiAPI.buildBasicAuthHeader(username, password)
@@ -92,10 +95,94 @@ function SuwayomiAPI.parseSourcesResponse(response_body)
     return parsed_sources
 end
 
-function SuwayomiAPI.fetchSources(credentials)
-    local ltn12 = require("ltn12")
+function SuwayomiAPI._buildMangaQuery(source_id)
+    return json.encode({
+        query = "mutation GET_SOURCE_MANGAS_FETCH($input: FetchSourceMangaInput!) { fetchSourceManga(input: $input) { hasNextPage mangas { id title } } }",
+        variables = {
+            input = {
+                source = tostring(source_id),
+                page = 1,
+                type = "POPULAR",
+            },
+        },
+    })
+end
 
-    if not credentials or credentials.server_url == "" then
+function SuwayomiAPI.parseMangaResponse(response_body)
+    local payload, _, err = json.decode(response_body, 1, nil)
+    if err then
+        return nil, "Invalid response from Suwayomi server."
+    end
+
+    local manga_nodes = payload
+        and payload.data
+        and payload.data.fetchSourceManga
+        and payload.data.fetchSourceManga.mangas
+
+    if type(manga_nodes) ~= "table" then
+        local graph_error = payload and payload.errors and payload.errors[1] and payload.errors[1].message
+        return nil, graph_error or "Suwayomi server did not return a manga list."
+    end
+
+    local manga = {}
+    for _, entry in ipairs(manga_nodes) do
+        table.insert(manga, {
+            id = tostring(entry.id),
+            title = entry.title or tostring(entry.id),
+        })
+    end
+
+    return manga
+end
+
+function SuwayomiAPI._buildChapterQuery(manga_id)
+    return json.encode({
+        query = "mutation GET_MANGA_CHAPTERS_FETCH($input: FetchChaptersInput!) { fetchChapters(input: $input) { chapters { id name chapterNumber sourceOrder scanlator } } }",
+        variables = {
+            input = {
+                mangaId = tonumber(manga_id) or manga_id,
+            },
+        },
+    })
+end
+
+function SuwayomiAPI.parseChapterResponse(response_body)
+    local payload, _, err = json.decode(response_body, 1, nil)
+    if err then
+        return nil, "Invalid response from Suwayomi server."
+    end
+
+    local chapter_nodes = payload
+        and payload.data
+        and payload.data.fetchChapters
+        and payload.data.fetchChapters.chapters
+
+    if type(chapter_nodes) ~= "table" then
+        local graph_error = payload and payload.errors and payload.errors[1] and payload.errors[1].message
+        return nil, graph_error or "Suwayomi server did not return a chapter list."
+    end
+
+    local chapters = {}
+    for _, entry in ipairs(chapter_nodes) do
+        local chapter_name = entry.name
+        if not chapter_name or chapter_name == "" then
+            chapter_name = entry.chapterNumber and ("Chapter " .. tostring(entry.chapterNumber)) or tostring(entry.id)
+        end
+
+        table.insert(chapters, {
+            id = tostring(entry.id),
+            name = chapter_name,
+        })
+    end
+
+    return chapters
+end
+
+performGraphQLRequest = function(credentials, request_body, operation_name)
+    local ltn12 = require("ltn12")
+    local server_url = credentials and credentials.server_url
+
+    if not server_url or server_url == "" then
         return {
             ok = false,
             error = "Missing Suwayomi server URL.",
@@ -103,47 +190,37 @@ function SuwayomiAPI.fetchSources(credentials)
     end
 
     local client
-    if credentials.server_url:match("^https://") then
+    if server_url:match("^https://") then
         client = require("ssl.https")
     else
         client = require("socket.http")
     end
 
     local response_chunks = {}
-    local request_body = SuwayomiAPI._buildSourcesQuery()
     local headers = SuwayomiAPI.buildRequestHeaders(credentials)
     headers["Content-Length"] = tostring(#request_body)
 
     local ok, code = client.request{
-        url = SuwayomiAPI.buildGraphQLEndpoint(credentials.server_url),
+        url = SuwayomiAPI.buildGraphQLEndpoint(server_url),
         method = "POST",
         headers = headers,
         source = ltn12.source.string(request_body),
         sink = ltn12.sink.table(response_chunks),
     }
 
-    appendDebugLog(string.format("fetchSources url=%s ok=%s code=%s code_type=%s", credentials.server_url, tostring(ok), tostring(code), type(code)))
+    appendDebugLog(string.format("%s url=%s ok=%s code=%s code_type=%s", operation_name, server_url, tostring(ok), tostring(code), type(code)))
 
     local response_body = table.concat(response_chunks)
     if code == 200 then
-        appendDebugLog("fetchSources received HTTP 200")
-        local sources, parse_error = SuwayomiAPI.parseSourcesResponse(response_body)
-        if not sources then
-            appendDebugLog("fetchSources parse error: " .. tostring(parse_error))
-            appendDebugLog("fetchSources success body: " .. tostring(response_body))
-            return {
-                ok = false,
-                error = parse_error,
-            }
-        end
+        appendDebugLog(operation_name .. " received HTTP 200")
         return {
             ok = true,
-            sources = sources,
+            response_body = response_body,
         }
     end
 
     if not ok then
-        appendDebugLog("fetchSources transport failure: " .. tostring(code))
+        appendDebugLog(operation_name .. " transport failure: " .. tostring(code))
         return {
             ok = false,
             error = "Could not reach the Suwayomi server: " .. tostring(code),
@@ -151,7 +228,7 @@ function SuwayomiAPI.fetchSources(credentials)
     end
 
     if type(code) ~= "number" then
-        appendDebugLog("fetchSources non-numeric status: " .. tostring(code))
+        appendDebugLog(operation_name .. " non-numeric status: " .. tostring(code))
         return {
             ok = false,
             error = "Could not reach the Suwayomi server: " .. tostring(code),
@@ -164,11 +241,77 @@ function SuwayomiAPI.fetchSources(credentials)
         [404] = "Suwayomi GraphQL endpoint not found.",
     }
 
-    appendDebugLog("fetchSources HTTP status: " .. tostring(code))
-    appendDebugLog("fetchSources response body: " .. tostring(response_body))
+    appendDebugLog(operation_name .. " HTTP status: " .. tostring(code))
+    appendDebugLog(operation_name .. " response body: " .. tostring(response_body))
     return {
         ok = false,
         error = error_message[code] or "Could not reach the Suwayomi server.",
+    }
+end
+
+function SuwayomiAPI.fetchSources(credentials)
+    local result = performGraphQLRequest(credentials, SuwayomiAPI._buildSourcesQuery(), "fetchSources")
+    if not result.ok then
+        return result
+    end
+
+    local sources, parse_error = SuwayomiAPI.parseSourcesResponse(result.response_body)
+    if not sources then
+        appendDebugLog("fetchSources parse error: " .. tostring(parse_error))
+        appendDebugLog("fetchSources success body: " .. tostring(result.response_body))
+        return {
+            ok = false,
+            error = parse_error,
+        }
+    end
+
+    return {
+        ok = true,
+        sources = sources,
+    }
+end
+
+function SuwayomiAPI.fetchMangaForSource(credentials, source_id)
+    local result = performGraphQLRequest(credentials, SuwayomiAPI._buildMangaQuery(source_id), "fetchMangaForSource")
+    if not result.ok then
+        return result
+    end
+
+    local manga, parse_error = SuwayomiAPI.parseMangaResponse(result.response_body)
+    if not manga then
+        appendDebugLog("fetchMangaForSource parse error: " .. tostring(parse_error))
+        appendDebugLog("fetchMangaForSource success body: " .. tostring(result.response_body))
+        return {
+            ok = false,
+            error = parse_error,
+        }
+    end
+
+    return {
+        ok = true,
+        manga = manga,
+    }
+end
+
+function SuwayomiAPI.fetchChaptersForManga(credentials, manga_id)
+    local result = performGraphQLRequest(credentials, SuwayomiAPI._buildChapterQuery(manga_id), "fetchChaptersForManga")
+    if not result.ok then
+        return result
+    end
+
+    local chapters, parse_error = SuwayomiAPI.parseChapterResponse(result.response_body)
+    if not chapters then
+        appendDebugLog("fetchChaptersForManga parse error: " .. tostring(parse_error))
+        appendDebugLog("fetchChaptersForManga success body: " .. tostring(result.response_body))
+        return {
+            ok = false,
+            error = parse_error,
+        }
+    end
+
+    return {
+        ok = true,
+        chapters = chapters,
     }
 end
 

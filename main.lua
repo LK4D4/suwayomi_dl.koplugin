@@ -149,7 +149,43 @@ function SuwayomiPlugin:browseSuwayomi()
     end
 
     SuwayomiUI.showSourcesMenu(filtered_sources, function(source)
-        self:showNotImplemented(T(_("Source selected: %1"), source.name))
+        self:showMangaForSource(source)
+    end)
+end
+
+function SuwayomiPlugin:showMangaForSource(source)
+    local credentials = SuwayomiSettings:load()
+    local result = SuwayomiAPI.fetchMangaForSource(credentials, source.id)
+    if not result.ok then
+        self:showMessage(_(result.error))
+        return
+    end
+
+    if not result.manga or #result.manga == 0 then
+        self:showMessage(_("This source has no manga."))
+        return
+    end
+
+    SuwayomiUI.showMangaMenu(result.manga, function(manga)
+        self:showChaptersForManga(manga)
+    end)
+end
+
+function SuwayomiPlugin:showChaptersForManga(manga)
+    local credentials = SuwayomiSettings:load()
+    local result = SuwayomiAPI.fetchChaptersForManga(credentials, manga.id)
+    if not result.ok then
+        self:showMessage(_(result.error))
+        return
+    end
+
+    if not result.chapters or #result.chapters == 0 then
+        self:showMessage(_("This manga has no chapters."))
+        return
+    end
+
+    SuwayomiUI.showChapterMenu(result.chapters, function(chapter)
+        self:showNotImplemented(T(_("Download not implemented yet for %1"), chapter.name))
     end)
 end
 
