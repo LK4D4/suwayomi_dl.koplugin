@@ -78,7 +78,6 @@ function SuwayomiAPI.parseSourcesResponse(response_body)
 end
 
 function SuwayomiAPI.fetchSources(credentials)
-    local http = require("socket.http")
     local ltn12 = require("ltn12")
 
     if not credentials or credentials.server_url == "" then
@@ -88,12 +87,19 @@ function SuwayomiAPI.fetchSources(credentials)
         }
     end
 
+    local client
+    if credentials.server_url:match("^https://") then
+        client = require("ssl.https")
+    else
+        client = require("socket.http")
+    end
+
     local response_chunks = {}
     local request_body = SuwayomiAPI._buildSourcesQuery()
     local headers = SuwayomiAPI.buildRequestHeaders(credentials)
     headers["Content-Length"] = tostring(#request_body)
 
-    local _, code = http.request{
+    local _, code = client.request{
         url = SuwayomiAPI.buildGraphQLEndpoint(credentials.server_url),
         method = "POST",
         headers = headers,
