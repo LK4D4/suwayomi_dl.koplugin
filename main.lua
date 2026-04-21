@@ -45,7 +45,9 @@ function SuwayomiPlugin:showLoginDialog()
         credentials = SuwayomiSettings:load(),
         onSave = function(credentials)
             local saved_credentials = SuwayomiSettings:save(credentials)
-            self:showMessage(_("Suwayomi login settings saved for %1."):format(saved_credentials.server_url))
+            UIManager:nextTick(function()
+                self:showMessage(_("Suwayomi login settings saved for %1."):format(saved_credentials.server_url))
+            end)
         end,
     })
 end

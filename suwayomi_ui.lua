@@ -76,6 +76,7 @@ function SuwayomiUI.showLoginDialog(options)
                     is_enter_default = true,
                     callback = function()
                         local fields = dialog:getFields()
+                        UIManager:close(dialog)
                         if options.onSave then
                             options.onSave({
                                 server_url = fields[1],
@@ -84,7 +85,6 @@ function SuwayomiUI.showLoginDialog(options)
                                 auth_method = "basic_auth",
                             })
                         end
-                        UIManager:close(dialog)
                     end,
                 },
             },
