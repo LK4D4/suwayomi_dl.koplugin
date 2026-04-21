@@ -20,7 +20,10 @@ jobs:
         luarocks --version
 
     - name: Install dependencies
-      run: luarocks install busted
+      run: luarocks install --local busted
+
+    - name: Add LuaRocks user bin to PATH
+      run: echo "$HOME/.luarocks/bin" >> "$GITHUB_PATH"
 
     - name: Run tests
       run: busted spec
