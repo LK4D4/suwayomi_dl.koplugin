@@ -13,8 +13,8 @@ describe("suwayomi_ui", function()
         package.loaded.suwayomi_ui = nil
         package.loaded.gettext = nil
         package.loaded["ui/widget/menu"] = nil
-        package.loaded["ui/widget/filechooser"] = nil
         package.loaded["ui/widget/multiinputdialog"] = nil
+        package.loaded["ui/downloadmgr"] = nil
         package.loaded["ui/uimanager"] = nil
 
         package.preload.gettext = function()
@@ -24,14 +24,6 @@ describe("suwayomi_ui", function()
         end
 
         package.preload["ui/widget/menu"] = function()
-            return {
-                new = function(_, options)
-                    return options
-                end,
-            }
-        end
-
-        package.preload["ui/widget/filechooser"] = function()
             return {
                 new = function(_, options)
                     return options
@@ -55,6 +47,18 @@ describe("suwayomi_ui", function()
             }
         end
 
+        package.preload["ui/downloadmgr"] = function()
+            return {
+                new = function(_, options)
+                    return {
+                        chooseDir = function()
+                            shown_dialog = options
+                        end,
+                    }
+                end,
+            }
+        end
+
         package.preload["ui/uimanager"] = function()
             return {
                 show = function(_, widget)
@@ -71,8 +75,8 @@ describe("suwayomi_ui", function()
     after_each(function()
         package.preload.gettext = nil
         package.preload["ui/widget/menu"] = nil
-        package.preload["ui/widget/filechooser"] = nil
         package.preload["ui/widget/multiinputdialog"] = nil
+        package.preload["ui/downloadmgr"] = nil
         package.preload["ui/uimanager"] = nil
     end)
 
@@ -169,5 +173,18 @@ describe("suwayomi_ui", function()
             { id = "s2", name = "ComicK" },
             { id = "s3", name = "Local source" },
         }, selected)
+    end)
+
+    it("uses KOReader download manager to choose a directory", function()
+        local ui = require("suwayomi_ui")
+        local chosen_path
+
+        ui.showDirectoryChooser(function(path)
+            chosen_path = path
+        end)
+
+        assert.are.equal("Choose download directory", shown_dialog.title)
+        shown_dialog.onConfirm("/storage/emulated/0/Books/Manga")
+        assert.are.equal("/storage/emulated/0/Books/Manga", chosen_path)
     end)
 end)

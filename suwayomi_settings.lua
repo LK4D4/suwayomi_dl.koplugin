@@ -14,6 +14,7 @@ local DEFAULT_CREDENTIALS = {
 }
 
 local DEFAULT_SOURCE_LANGUAGES = { "en" }
+local DEFAULT_DOWNLOAD_DIRECTORY = ""
 
 local function copyTable(source)
     local target = {}
@@ -73,6 +74,16 @@ function SuwayomiSettings:saveSourceLanguages(source_languages)
     end
 
     self:open():saveSetting("source_languages", normalized):flush()
+    return normalized
+end
+
+function SuwayomiSettings:loadDownloadDirectory()
+    return self:open():readSetting("download_directory", DEFAULT_DOWNLOAD_DIRECTORY)
+end
+
+function SuwayomiSettings:saveDownloadDirectory(path)
+    local normalized = path or ""
+    self:open():saveSetting("download_directory", normalized):flush()
     return normalized
 end
 

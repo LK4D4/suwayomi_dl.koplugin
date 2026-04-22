@@ -1,24 +1,18 @@
 local Menu = require("ui/widget/menu")
-local FileChooser = require("ui/widget/filechooser")
 local MultiInputDialog = require("ui/widget/multiinputdialog")
 local _ = require("gettext")
 
 local SuwayomiUI = {}
 
 function SuwayomiUI.showDirectoryChooser(callback)
-    local chooser
-    chooser = FileChooser:new{
-        title = _("Select download directory"),
+    require("ui/downloadmgr"):new{
+        title = _("Choose download directory"),
         onConfirm = function(path)
-            if callback then callback(path) end
-            if chooser then
-                chooser:onClose()
+            if callback then
+                callback(path)
             end
         end,
-    }
-    -- Show UI
-    local UIManager = require("ui/uimanager")
-    UIManager:show(chooser)
+    }:chooseDir()
 end
 
 function SuwayomiUI.showSourcesMenu(sources, onSelectCallback)

@@ -95,4 +95,18 @@ describe("suwayomi_settings", function()
         assert.is_true(flushed)
         assert.are.same({ "en", "ru", "de" }, stored_data.source_languages)
     end)
+
+    it("loads an empty download directory by default", function()
+        local settings = require("suwayomi_settings")
+
+        assert.are.equal("", settings:loadDownloadDirectory())
+    end)
+
+    it("saves the download directory and flushes the settings file", function()
+        local settings = require("suwayomi_settings")
+        settings:saveDownloadDirectory("/storage/emulated/0/Books/Manga")
+
+        assert.is_true(flushed)
+        assert.are.equal("/storage/emulated/0/Books/Manga", stored_data.download_directory)
+    end)
 end)

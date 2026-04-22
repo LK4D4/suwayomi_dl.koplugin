@@ -216,7 +216,8 @@ function SuwayomiPlugin:addToMainMenu(menu_items)
                 text = _("Setup download directory"),
                 callback = function()
                     SuwayomiUI.showDirectoryChooser(function(path)
-                        self:showNotImplemented(T(_("Selected download directory: %1"), path))
+                        local saved_path = SuwayomiSettings:saveDownloadDirectory(path)
+                        self:showMessage(T(_("Suwayomi download directory saved: %1"), saved_path))
                     end)
                 end
             }

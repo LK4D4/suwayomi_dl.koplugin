@@ -7,6 +7,8 @@ describe("suwayomi plugin", function()
     local language_menu_options
     local shown_messages
     local shown_sources
+    local directory_chooser_callback
+    local saved_download_directory
 
     local function reset_plugin_environment()
         registered_actions = {}
@@ -15,6 +17,8 @@ describe("suwayomi plugin", function()
         language_menu_options = nil
         shown_messages = {}
         shown_sources = nil
+        directory_chooser_callback = nil
+        saved_download_directory = nil
 
         package.loaded.main = nil
         package.loaded.dispatcher = nil
@@ -112,7 +116,9 @@ describe("suwayomi plugin", function()
 
         package.preload.suwayomi_ui = function()
             return {
-                showDirectoryChooser = function() end,
+                showDirectoryChooser = function(callback)
+                    directory_chooser_callback = callback
+                end,
                 showLoginDialog = function(options)
                     login_dialog_options = options
                 end,
@@ -145,6 +151,13 @@ describe("suwayomi plugin", function()
                 end,
                 saveSourceLanguages = function(_, languages)
                     return languages
+                end,
+                loadDownloadDirectory = function()
+                    return ""
+                end,
+                saveDownloadDirectory = function(_, path)
+                    saved_download_directory = path
+                    return path
                 end,
             }
         end
@@ -354,5 +367,19 @@ describe("suwayomi plugin", function()
         assert.are.equal(true, language_menu_options.languages[1].enabled)
         assert.are.equal(true, language_menu_options.languages[2].enabled)
         assert.are.equal(false, language_menu_options.languages[3].enabled)
+    end)
+
+    it("saves the chosen download directory and shows a confirmation", function()
+        local plugin_class = require("main")
+        local menu_items = {}
+        local plugin = plugin_class{}
+
+        plugin:addToMainMenu(menu_items)
+        menu_items.suwayomi_dl.sub_item_table[4].callback()
+
+        directory_chooser_callback("/storage/emulated/0/Books/Manga")
+
+        assert.are.equal("/storage/emulated/0/Books/Manga", saved_download_directory)
+        assert.are.equal("Suwayomi download directory saved: /storage/emulated/0/Books/Manga", shown_messages[#shown_messages])
     end)
 end)
