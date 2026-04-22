@@ -146,6 +146,25 @@ function SuwayomiAPI._buildChapterQuery(manga_id)
     })
 end
 
+function SuwayomiAPI._buildStoredChapterQuery(manga_id)
+    return json.encode({
+        query = "query GET_CHAPTERS_MANGA($filter: ChapterFilterInput, $first: Int, $order: [ChapterOrderInput!]) { chapters(filter: $filter, first: $first, order: $order) { totalCount nodes { id name chapterNumber sourceOrder scanlator } } }",
+        variables = {
+            filter = {
+                mangaId = {
+                    equalTo = tonumber(manga_id) or manga_id,
+                },
+            },
+            first = 200,
+            order = {
+                {
+                    by = "SOURCE_ORDER",
+                },
+            },
+        },
+    })
+end
+
 function SuwayomiAPI.parseChapterResponse(response_body)
     local payload, _, err = json.decode(response_body, 1, nil)
     if err then
@@ -156,6 +175,38 @@ function SuwayomiAPI.parseChapterResponse(response_body)
         and payload.data
         and payload.data.fetchChapters
         and payload.data.fetchChapters.chapters
+
+    if type(chapter_nodes) ~= "table" then
+        local graph_error = payload and payload.errors and payload.errors[1] and payload.errors[1].message
+        return nil, graph_error or "Suwayomi server did not return a chapter list."
+    end
+
+    local chapters = {}
+    for _, entry in ipairs(chapter_nodes) do
+        local chapter_name = entry.name
+        if not chapter_name or chapter_name == "" then
+            chapter_name = entry.chapterNumber and ("Chapter " .. tostring(entry.chapterNumber)) or tostring(entry.id)
+        end
+
+        table.insert(chapters, {
+            id = tostring(entry.id),
+            name = chapter_name,
+        })
+    end
+
+    return chapters
+end
+
+function SuwayomiAPI.parseStoredChapterResponse(response_body)
+    local payload, _, err = json.decode(response_body, 1, nil)
+    if err then
+        return nil, "Invalid response from Suwayomi server."
+    end
+
+    local chapter_nodes = payload
+        and payload.data
+        and payload.data.chapters
+        and payload.data.chapters.nodes
 
     if type(chapter_nodes) ~= "table" then
         local graph_error = payload and payload.errors and payload.errors[1] and payload.errors[1].message
@@ -293,7 +344,34 @@ function SuwayomiAPI.fetchMangaForSource(credentials, source_id)
     }
 end
 
+function SuwayomiAPI.queryChaptersForManga(credentials, manga_id)
+    local result = performGraphQLRequest(credentials, SuwayomiAPI._buildStoredChapterQuery(manga_id), "queryChaptersForManga")
+    if not result.ok then
+        return result
+    end
+
+    local chapters, parse_error = SuwayomiAPI.parseStoredChapterResponse(result.response_body)
+    if not chapters then
+        appendDebugLog("queryChaptersForManga parse error: " .. tostring(parse_error))
+        appendDebugLog("queryChaptersForManga success body: " .. tostring(result.response_body))
+        return {
+            ok = false,
+            error = parse_error,
+        }
+    end
+
+    return {
+        ok = true,
+        chapters = chapters,
+    }
+end
+
 function SuwayomiAPI.fetchChaptersForManga(credentials, manga_id)
+    local stored_result = SuwayomiAPI.queryChaptersForManga(credentials, manga_id)
+    if stored_result.ok and stored_result.chapters and #stored_result.chapters > 0 then
+        return stored_result
+    end
+
     local result = performGraphQLRequest(credentials, SuwayomiAPI._buildChapterQuery(manga_id), "fetchChaptersForManga")
     if not result.ok then
         return result

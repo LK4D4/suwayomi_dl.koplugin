@@ -243,6 +243,14 @@ describe("suwayomi_api", function()
         assert.truthy(query:match("fetchChapters"))
     end)
 
+    it("builds the stored chapter query for a manga", function()
+        local query = api._buildStoredChapterQuery("17")
+        assert.truthy(query:match("query GET_CHAPTERS_MANGA"))
+        assert.truthy(query:match('"equalTo":17'))
+        assert.truthy(query:match('"first":200'))
+        assert.truthy(query:match("chapters"))
+    end)
+
     it("parses chapters from a manga response body", function()
         local response = [[
             {
@@ -267,6 +275,73 @@ describe("suwayomi_api", function()
             { id = "3", name = "Chapter 8" },
             { id = "4", name = "4" },
         }, chapters)
+    end)
+
+    it("parses stored chapters from a chapter query response body", function()
+        local response = [[
+            {
+                "data": {
+                    "chapters": {
+                        "nodes": [
+                            { "id": 1, "name": "Chapter 1" },
+                            { "id": 2, "name": "", "chapterNumber": 7 },
+                            { "id": 3, "chapterNumber": 8 }
+                        ]
+                    }
+                }
+            }
+        ]]
+
+        local chapters = api.parseStoredChapterResponse(response)
+
+        assert.are.same({
+            { id = "1", name = "Chapter 1" },
+            { id = "2", name = "Chapter 7" },
+            { id = "3", name = "Chapter 8" },
+        }, chapters)
+    end)
+
+    it("queries stored chapters for a manga and parses the response", function()
+        local requested_body
+
+        package.preload["ssl.https"] = function()
+            return {
+                request = function(options)
+                    requested_body = options.source
+                    options.sink("ignored")
+                    return 1, 200
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value)
+                        return value
+                    end,
+                },
+                sink = {
+                    table = function(target)
+                        return function(_chunk)
+                            table.insert(target, [[{"data":{"chapters":{"totalCount":1,"nodes":[{"id":1,"name":"Chapter 1"}]}}}]])
+                        end
+                    end,
+                },
+            }
+        end
+
+        local result = api.queryChaptersForManga({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "17")
+
+        assert.is_true(result.ok)
+        assert.truthy(requested_body:match("GET_CHAPTERS_MANGA"))
+        assert.truthy(requested_body:match('"equalTo":17'))
+        assert.are.same({ { id = "1", name = "Chapter 1" } }, result.chapters)
     end)
 
     it("fetches chapters for a manga and parses the response", function()
@@ -310,6 +385,101 @@ describe("suwayomi_api", function()
         assert.truthy(requested_body:match("GET_MANGA_CHAPTERS_FETCH"))
         assert.truthy(requested_body:match('"mangaId":"m1"'))
         assert.are.same({ { id = "1", name = "Chapter 1" } }, result.chapters)
+    end)
+
+    it("prefers stored chapters before falling back to fetch", function()
+        local requests = {}
+
+        package.preload["ssl.https"] = function()
+            return {
+                request = function(options)
+                    table.insert(requests, options.source)
+                    options.sink("ignored")
+                    return 1, 200
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value)
+                        return value
+                    end,
+                },
+                sink = {
+                    table = function(target)
+                        return function(_chunk)
+                            if #requests == 1 then
+                                table.insert(target, [[{"data":{"chapters":{"totalCount":1,"nodes":[{"id":1,"name":"Chapter 1"}]}}}]])
+                            else
+                                table.insert(target, [[{"data":{"fetchChapters":{"chapters":[{"id":2,"name":"Fetched Chapter"}]}}}]])
+                            end
+                        end
+                    end,
+                },
+            }
+        end
+
+        local result = api.fetchChaptersForManga({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "17")
+
+        assert.is_true(result.ok)
+        assert.are.equal(1, #requests)
+        assert.truthy(requests[1]:match("GET_CHAPTERS_MANGA"))
+        assert.are.same({ { id = "1", name = "Chapter 1" } }, result.chapters)
+    end)
+
+    it("falls back to fetch when stored chapters are empty", function()
+        local requests = {}
+
+        package.preload["ssl.https"] = function()
+            return {
+                request = function(options)
+                    table.insert(requests, options.source)
+                    options.sink("ignored")
+                    return 1, 200
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value)
+                        return value
+                    end,
+                },
+                sink = {
+                    table = function(target)
+                        return function(_chunk)
+                            if #requests == 1 then
+                                table.insert(target, [[{"data":{"chapters":{"totalCount":0,"nodes":[]}}}]])
+                            else
+                                table.insert(target, [[{"data":{"fetchChapters":{"chapters":[{"id":1,"name":"Fetched Chapter"}]}}}]])
+                            end
+                        end
+                    end,
+                },
+            }
+        end
+
+        local result = api.fetchChaptersForManga({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "17")
+
+        assert.is_true(result.ok)
+        assert.are.equal(2, #requests)
+        assert.truthy(requests[1]:match("GET_CHAPTERS_MANGA"))
+        assert.truthy(requests[2]:match("GET_MANGA_CHAPTERS_FETCH"))
+        assert.are.same({ { id = "1", name = "Fetched Chapter" } }, result.chapters)
     end)
 
     it("returns a missing URL error when chapter fetch credentials omit server_url", function()
