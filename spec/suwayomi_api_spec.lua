@@ -243,6 +243,13 @@ describe("suwayomi_api", function()
         assert.truthy(query:match("fetchChapters"))
     end)
 
+    it("builds the chapter pages mutation for a chapter", function()
+        local query = api._buildChapterPagesQuery("398")
+        assert.truthy(query:match("mutation Pages"))
+        assert.truthy(query:match("fetchChapterPages"))
+        assert.truthy(query:match('"chapterId":398'))
+    end)
+
     it("builds the stored chapter query for a manga", function()
         local query = api._buildStoredChapterQuery("17")
         assert.truthy(query:match("query GET_CHAPTERS_MANGA"))
@@ -275,6 +282,401 @@ describe("suwayomi_api", function()
             { id = "3", name = "Chapter 8" },
             { id = "4", name = "4" },
         }, chapters)
+    end)
+
+    it("parses chapter pages using the exact URLs returned by Suwayomi", function()
+        local response = [[
+            {
+                "data": {
+                    "fetchChapterPages": {
+                        "pages": [
+                            "/api/v1/manga/85/chapter/1/page/0",
+                            "/api/v1/manga/85/chapter/1/page/1"
+                        ],
+                        "chapter": {
+                            "id": 398,
+                            "name": "Official_Vol. 1 Ch. 1",
+                            "manga": { "title": "Sousou no Frieren" }
+                        }
+                    }
+                }
+            }
+        ]]
+
+        local result = api.parseChapterPagesResponse(response)
+
+        assert.are.same({
+            chapter = {
+                id = "398",
+                name = "Official_Vol. 1 Ch. 1",
+                manga_title = "Sousou no Frieren",
+            },
+            pages = {
+                "/api/v1/manga/85/chapter/1/page/0",
+                "/api/v1/manga/85/chapter/1/page/1",
+            },
+        }, result)
+    end)
+
+    it("fetches chapter pages and preserves the returned page URLs", function()
+        package.preload["ssl.https"] = function()
+            return {
+                request = function(options)
+                    options.sink("ignored")
+                    return 1, 200
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value) return value end,
+                },
+                sink = {
+                    table = function(target)
+                        return function()
+                            table.insert(target, [[{"data":{"fetchChapterPages":{"pages":["/api/v1/manga/85/chapter/1/page/0"],"chapter":{"id":398,"name":"Official_Vol. 1 Ch. 1","manga":{"title":"Sousou no Frieren"}}}}}]])
+                        end
+                    end,
+                },
+            }
+        end
+
+        local result = api.fetchChapterPages({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "398")
+
+        assert.is_true(result.ok)
+        assert.are.same({ "/api/v1/manga/85/chapter/1/page/0" }, result.pages)
+        assert.are.equal("Sousou no Frieren", result.chapter.manga_title)
+    end)
+
+    it("reports malformed chapter page responses from the server", function()
+        local logs = {}
+        local original_io_open = io.open
+
+        io.open = function()
+            return {
+                write = function(_, message)
+                    table.insert(logs, message)
+                end,
+                close = function() end,
+            }
+        end
+
+        package.preload["ssl.https"] = function()
+            return {
+                request = function(options)
+                    options.sink("ignored")
+                    return 1, 200
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value) return value end,
+                },
+                sink = {
+                    table = function(target)
+                        return function()
+                            table.insert(target, "{not-json")
+                        end
+                    end,
+                },
+            }
+        end
+
+        local result = api.fetchChapterPages({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "398")
+
+        io.open = original_io_open
+
+        assert.is_false(result.ok)
+        assert.are.equal("Invalid response from Suwayomi server.", result.error)
+        assert.truthy(table.concat(logs, "\n"):match("fetchChapterPages parse error:"))
+        assert.truthy(table.concat(logs, "\n"):match("fetchChapterPages success body:"))
+    end)
+
+    it("downloads binary page bytes from a relative URL", function()
+        local requested_url
+
+        package.preload["ssl.https"] = function()
+            return {
+                request = function(options)
+                    requested_url = options.url
+                    options.sink("ignored")
+                    return 1, 200, {
+                        ["content-type"] = "image/jpeg",
+                    }
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value) return value end,
+                },
+                sink = {
+                    table = function(target)
+                        return function()
+                            table.insert(target, "jpeg-bytes")
+                        end
+                    end,
+                },
+            }
+        end
+
+        local result = api.downloadBinary({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "/api/v1/manga/85/chapter/1/page/0")
+
+        assert.is_true(result.ok)
+        assert.are.equal("https://suwayomi.example/api/v1/manga/85/chapter/1/page/0", requested_url)
+        assert.are.equal("jpeg-bytes", result.body)
+        assert.are.equal("image/jpeg", result.content_type)
+    end)
+
+    it("uses socket.http for absolute http page URLs without rewriting them", function()
+        local requested_url
+        local selected_client
+
+        package.preload["ssl.https"] = function()
+            return {
+                request = function()
+                    selected_client = "ssl.https"
+                    return nil, "unexpected ssl client"
+                end,
+            }
+        end
+
+        package.preload["socket.http"] = function()
+            return {
+                request = function(options)
+                    selected_client = "socket.http"
+                    requested_url = options.url
+                    options.sink("ignored")
+                    return 1, 200, {
+                        ["content-type"] = "image/png",
+                    }
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value) return value end,
+                },
+                sink = {
+                    table = function(target)
+                        return function()
+                            table.insert(target, "png-bytes")
+                        end
+                    end,
+                },
+            }
+        end
+
+        local result = api.downloadBinary({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "http://cdn.example/assets/page-1.png")
+
+        assert.is_true(result.ok)
+        assert.are.equal("socket.http", selected_client)
+        assert.are.equal("http://cdn.example/assets/page-1.png", requested_url)
+        assert.are.equal("png-bytes", result.body)
+        assert.are.equal("image/png", result.content_type)
+    end)
+
+    it("does not send Suwayomi auth headers to off-origin absolute page URLs", function()
+        local requested_headers
+
+        package.preload["socket.http"] = function()
+            return {
+                request = function(options)
+                    requested_headers = options.headers
+                    options.sink("ignored")
+                    return 1, 200, {
+                        ["content-type"] = "image/png",
+                    }
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value) return value end,
+                },
+                sink = {
+                    table = function(target)
+                        return function()
+                            table.insert(target, "png-bytes")
+                        end
+                    end,
+                },
+            }
+        end
+
+        local result = api.downloadBinary({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "http://cdn.example/assets/page-2.png")
+
+        assert.is_true(result.ok)
+        assert.is_nil(requested_headers.Authorization)
+    end)
+
+    it("reports download failures when the HTTP client returns a non-200 status", function()
+        package.preload["socket.http"] = function()
+            return {
+                request = function(options)
+                    options.sink("ignored")
+                    return 1, 500, {}
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value) return value end,
+                },
+                sink = {
+                    table = function(_target)
+                        return function() end
+                    end,
+                },
+            }
+        end
+
+        local result = api.downloadBinary({
+            server_url = "http://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "/api/v1/manga/85/chapter/1/page/0")
+
+        assert.is_false(result.ok)
+        assert.are.equal("Could not download chapter page.", result.error)
+    end)
+
+    it("surfaces transport errors when downloading binary page bytes", function()
+        package.preload["socket.http"] = function()
+            return {
+                request = function(_options)
+                    return nil, "network timeout"
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value) return value end,
+                },
+                sink = {
+                    table = function(_target)
+                        return function() end
+                    end,
+                },
+            }
+        end
+
+        local result = api.downloadBinary({
+            server_url = "http://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "/api/v1/manga/85/chapter/1/page/0")
+
+        assert.is_false(result.ok)
+        assert.are.equal("Could not reach the Suwayomi server: network timeout", result.error)
+    end)
+
+    it("reports not-found responses when downloading binary page bytes", function()
+        package.preload["socket.http"] = function()
+            return {
+                request = function(options)
+                    options.sink("ignored")
+                    return 1, 404, {}
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value) return value end,
+                },
+                sink = {
+                    table = function(_target)
+                        return function() end
+                    end,
+                },
+            }
+        end
+
+        local result = api.downloadBinary({
+            server_url = "http://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "/api/v1/manga/85/chapter/1/page/0")
+
+        assert.is_false(result.ok)
+        assert.are.equal("Chapter page not found.", result.error)
+    end)
+
+    it("falls back to the chapter id when chapter pages return an empty chapter name", function()
+        local response = [[
+            {
+                "data": {
+                    "fetchChapterPages": {
+                        "pages": [
+                            "/api/v1/manga/85/chapter/1/page/0"
+                        ],
+                        "chapter": {
+                            "id": 398,
+                            "name": "",
+                            "manga": { "title": "Sousou no Frieren" }
+                        }
+                    }
+                }
+            }
+        ]]
+
+        local result = api.parseChapterPagesResponse(response)
+
+        assert.are.same({
+            chapter = {
+                id = "398",
+                name = "398",
+                manga_title = "Sousou no Frieren",
+            },
+            pages = {
+                "/api/v1/manga/85/chapter/1/page/0",
+            },
+        }, result)
     end)
 
     it("parses stored chapters from a chapter query response body", function()

@@ -67,6 +67,42 @@ function SuwayomiAPI.buildGraphQLEndpoint(server_url)
     return (server_url or ""):gsub("/+$", "") .. "/api/graphql"
 end
 
+function SuwayomiAPI.buildRequestURL(server_url, path)
+    if path:match("^https?://") then
+        return path
+    end
+
+    return (server_url or ""):gsub("/+$", "") .. "/" .. tostring(path):gsub("^/+", "")
+end
+
+local function parseOrigin(url)
+    local scheme, host, port = tostring(url or ""):match("^(https?)://([^/%?#:]+):?(%d*)")
+    if not scheme or not host then
+        return nil
+    end
+
+    if port == "" then
+        port = scheme == "https" and "443" or "80"
+    end
+
+    return {
+        scheme = scheme,
+        host = host:lower(),
+        port = port,
+    }
+end
+
+local function isSameOrigin(url_a, url_b)
+    local origin_a = parseOrigin(url_a)
+    local origin_b = parseOrigin(url_b)
+
+    return origin_a
+        and origin_b
+        and origin_a.scheme == origin_b.scheme
+        and origin_a.host == origin_b.host
+        and origin_a.port == origin_b.port
+end
+
 function SuwayomiAPI.parseSourcesResponse(response_body)
     local payload, _, err = json.decode(response_body, 1, nil)
     if err then
@@ -146,6 +182,17 @@ function SuwayomiAPI._buildChapterQuery(manga_id)
     })
 end
 
+function SuwayomiAPI._buildChapterPagesQuery(chapter_id)
+    return json.encode({
+        query = "mutation Pages($input: FetchChapterPagesInput!) { fetchChapterPages(input: $input) { pages chapter { id name manga { title } } } }",
+        variables = {
+            input = {
+                chapterId = tonumber(chapter_id) or chapter_id,
+            },
+        },
+    })
+end
+
 function SuwayomiAPI._buildStoredChapterQuery(manga_id)
     return json.encode({
         query = "query GET_CHAPTERS_MANGA($filter: ChapterFilterInput, $first: Int, $order: [ChapterOrderInput!]) { chapters(filter: $filter, first: $first, order: $order) { totalCount nodes { id name chapterNumber sourceOrder scanlator } } }",
@@ -195,6 +242,120 @@ function SuwayomiAPI.parseChapterResponse(response_body)
     end
 
     return chapters
+end
+
+function SuwayomiAPI.parseChapterPagesResponse(response_body)
+    local payload, _, err = json.decode(response_body, 1, nil)
+    if err then
+        return nil, "Invalid response from Suwayomi server."
+    end
+
+    local data = payload and payload.data and payload.data.fetchChapterPages
+    local pages = data and data.pages
+    local chapter = data and data.chapter
+
+    if type(pages) ~= "table" or type(chapter) ~= "table" then
+        local graph_error = payload and payload.errors and payload.errors[1] and payload.errors[1].message
+        return nil, graph_error or "Suwayomi server did not return chapter pages."
+    end
+
+    local chapter_name = chapter.name
+    if not chapter_name or chapter_name == "" then
+        chapter_name = tostring(chapter.id)
+    end
+
+    return {
+        chapter = {
+            id = tostring(chapter.id),
+            name = chapter_name,
+            manga_title = chapter.manga and chapter.manga.title or "",
+        },
+        pages = pages,
+    }
+end
+
+function SuwayomiAPI.fetchChapterPages(credentials, chapter_id)
+    local result = performGraphQLRequest(credentials, SuwayomiAPI._buildChapterPagesQuery(chapter_id), "fetchChapterPages")
+    if not result.ok then
+        return result
+    end
+
+    local parsed, parse_error = SuwayomiAPI.parseChapterPagesResponse(result.response_body)
+    if not parsed then
+        appendDebugLog("fetchChapterPages parse error: " .. tostring(parse_error))
+        appendDebugLog("fetchChapterPages success body: " .. tostring(result.response_body))
+        return {
+            ok = false,
+            error = parse_error,
+        }
+    end
+
+    return {
+        ok = true,
+        chapter = parsed.chapter,
+        pages = parsed.pages,
+    }
+end
+
+function SuwayomiAPI.downloadBinary(credentials, page_url)
+    local ltn12 = require("ltn12")
+    local server_url = credentials and credentials.server_url
+    if not server_url or server_url == "" then
+        return {
+            ok = false,
+            error = "Missing Suwayomi server URL.",
+        }
+    end
+
+    local request_url = SuwayomiAPI.buildRequestURL(server_url, page_url)
+    local client = request_url:match("^https://") and require("ssl.https") or require("socket.http")
+    local response_chunks = {}
+    local headers = {}
+
+    if not page_url:match("^https?://") or isSameOrigin(server_url, request_url) then
+        headers = SuwayomiAPI.buildRequestHeaders(credentials)
+    end
+
+    local ok, code, headers = client.request{
+        url = request_url,
+        method = "GET",
+        headers = headers,
+        sink = ltn12.sink.table(response_chunks),
+    }
+
+    headers = headers or {}
+    if code == 200 then
+        return {
+            ok = true,
+            body = table.concat(response_chunks),
+            content_type = headers["content-type"] or headers["Content-Type"],
+        }
+    end
+
+    if not ok then
+        return {
+            ok = false,
+            error = "Could not reach the Suwayomi server: " .. tostring(code),
+        }
+    end
+
+    if type(code) ~= "number" then
+        return {
+            ok = false,
+            error = "Could not reach the Suwayomi server: " .. tostring(code),
+        }
+    end
+
+    local error_message = {
+        [401] = "Authentication failed.",
+        [403] = "Authentication failed.",
+        [404] = "Chapter page not found.",
+    }
+
+    return {
+        ok = false,
+        error = error_message[code] or "Could not download chapter page.",
+    }
 end
 
 function SuwayomiAPI.parseStoredChapterResponse(response_body)

@@ -1,19 +1,19 @@
 # Suwayomi Downloader for KOReader
 
-A KOReader plugin that allows you to browse and asynchronously download manga from your self-hosted [Suwayomi (Tachidesk)](https://github.com/Suwayomi/Suwayomi-Server) server directly to your e-ink device.
+A KOReader plugin that allows you to browse your self-hosted [Suwayomi (Tachidesk)](https://github.com/Suwayomi/Suwayomi-Server) server and download chapters directly to your e-ink device.
 
 ## Development Status
 
 This plugin is experimental and still under active development.
 
 - Expect rough edges and incomplete features.
-- The login flow and source browsing are currently implemented and being tested.
-- Manga browsing, chapter browsing, and downloads are not complete yet.
+- The login flow, source browsing, manga browsing, chapter browsing, and single-chapter downloads are currently implemented and being tested.
+- Bulk downloads and background queueing are not complete yet.
 
 ## Features
 - Native KOReader UI integration
 - Browse sources, manga, and chapters directly from the server
-- Asynchronous background downloading of chapters (no frozen UI!)
+- Single-chapter downloading of chapters
 - Select custom download directories (perfect for treating downloaded chapters as local books)
 
 ## Installation
@@ -31,7 +31,8 @@ This plugin is experimental and still under active development.
 2. Tap **Suwayomi**.
 3. First time use: Tap **Setup login information** to enter your Suwayomi Server URL, username, and password.
 4. Tap **Setup download directory** to choose where manga will be downloaded.
-5. Tap **Browse Suwayomi** to explore your server and download chapters.
+5. Tap **Browse Suwayomi** to explore the server.
+6. Tap a chapter to download it into the configured directory as a `.cbz`.
 
 ## Testing Locally
 

@@ -2,6 +2,7 @@ local Dispatcher = require("dispatcher") -- luacheck:ignore
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local InfoMessage = require("ui/widget/infomessage")
+local Trapper = require("ui/trapper")
 local SuwayomiAPI = require("suwayomi_api")
 local SuwayomiSettings = require("suwayomi_settings")
 local SuwayomiUI = require("suwayomi_ui")
@@ -185,8 +186,30 @@ function SuwayomiPlugin:showChaptersForManga(manga)
     end
 
     SuwayomiUI.showChapterMenu(result.chapters, function(chapter)
-        self:showNotImplemented(T(_("Download not implemented yet for %1"), chapter.name))
+        Trapper:wrap(function()
+            self:downloadChapter(manga, chapter)
+        end)
     end)
+end
+
+function SuwayomiPlugin:downloadChapter(manga, chapter)
+    local SuwayomiDownloader = require("suwayomi_downloader")
+    local credentials = SuwayomiSettings:load()
+    local download_directory = SuwayomiSettings:loadDownloadDirectory()
+    local completed, result = Trapper:dismissableRunInSubprocess(function()
+        return SuwayomiDownloader:downloadChapter(credentials, download_directory, manga, chapter)
+    end, _("Downloading chapter… (tap to cancel)"))
+
+    if not completed then
+        self:showMessage(_("Chapter download interrupted."))
+        return
+    end
+
+    if result and result.ok then
+        self:showMessage(T(_("Downloaded chapter to %1"), result.path))
+    else
+        self:showMessage(_((result and result.error) or _("Chapter download failed.")))
+    end
 end
 
 function SuwayomiPlugin:addToMainMenu(menu_items)

@@ -9,6 +9,8 @@ describe("suwayomi plugin", function()
     local shown_sources
     local directory_chooser_callback
     local saved_download_directory
+    local trapper_wrapped
+    local trapper_subprocess_calls
 
     local function reset_plugin_environment()
         registered_actions = {}
@@ -19,15 +21,19 @@ describe("suwayomi plugin", function()
         shown_sources = nil
         directory_chooser_callback = nil
         saved_download_directory = nil
+        trapper_wrapped = 0
+        trapper_subprocess_calls = {}
 
         package.loaded.main = nil
         package.loaded.dispatcher = nil
         package.loaded["ffi/util"] = nil
         package.loaded.gettext = nil
+        package.loaded["ui/trapper"] = nil
         package.loaded["ui/uimanager"] = nil
         package.loaded["ui/widget/infomessage"] = nil
         package.loaded["ui/widget/container/widgetcontainer"] = nil
         package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
         package.loaded.suwayomi_ui = nil
         package.loaded.suwayomi_settings = nil
 
@@ -68,6 +74,19 @@ describe("suwayomi plugin", function()
                 end,
                 nextTick = function(_, callback)
                     callback()
+                end,
+            }
+        end
+
+        package.preload["ui/trapper"] = function()
+            return {
+                wrap = function(_, callback)
+                    trapper_wrapped = trapper_wrapped + 1
+                    return callback()
+                end,
+                dismissableRunInSubprocess = function(_, callback, message)
+                    table.insert(trapper_subprocess_calls, message)
+                    return true, callback()
                 end,
             }
         end
@@ -169,10 +188,12 @@ describe("suwayomi plugin", function()
         package.preload.dispatcher = nil
         package.preload["ffi/util"] = nil
         package.preload.gettext = nil
+        package.preload["ui/trapper"] = nil
         package.preload["ui/uimanager"] = nil
         package.preload["ui/widget/infomessage"] = nil
         package.preload["ui/widget/container/widgetcontainer"] = nil
         package.preload.suwayomi_api = nil
+        package.preload.suwayomi_downloader = nil
         package.preload.suwayomi_ui = nil
         package.preload.suwayomi_settings = nil
     end)
@@ -257,37 +278,35 @@ describe("suwayomi plugin", function()
         }, shown_sources)
     end)
 
-    it("navigates from a source to a manga to a chapter placeholder", function()
-        local manga_shown
-        local chapter_shown
+    it("downloads a selected chapter and shows the saved path", function()
+        local downloader_called
 
         package.preload.suwayomi_api = function()
             return {
                 fetchSources = function()
-                    return {
-                        ok = true,
-                        sources = {
-                            { id = "s1", name = "MangaDex", lang = "en" },
-                        },
-                    }
+                    return { ok = true, sources = { { id = "s1", name = "MangaDex", lang = "en" } } }
                 end,
                 fetchMangaForSource = function(_, source_id)
                     assert.are.equal("s1", source_id)
-                    return {
-                        ok = true,
-                        manga = {
-                            { id = "m1", title = "One Piece" },
-                        },
-                    }
+                    return { ok = true, manga = { { id = "m1", title = "Sousou no Frieren" } } }
                 end,
                 fetchChaptersForManga = function(_, manga_id)
                     assert.are.equal("m1", manga_id)
-                    return {
-                        ok = true,
-                        chapters = {
-                            { id = "c1", name = "Chapter 1" },
-                        },
+                    return { ok = true, chapters = { { id = "398", name = "Official_Vol. 1 Ch. 1" } } }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                downloadChapter = function(_, credentials, download_directory, manga, chapter)
+                    downloader_called = {
+                        credentials = credentials,
+                        download_directory = download_directory,
+                        manga = manga,
+                        chapter = chapter,
                     }
+                    return { ok = true, path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz" }
                 end,
             }
         end
@@ -298,11 +317,9 @@ describe("suwayomi plugin", function()
                     onSelect(sources[1])
                 end,
                 showMangaMenu = function(manga, onSelect)
-                    manga_shown = manga
                     onSelect(manga[1])
                 end,
                 showChapterMenu = function(chapters, onSelect)
-                    chapter_shown = chapters
                     onSelect(chapters[1])
                 end,
                 showDirectoryChooser = function() end,
@@ -311,22 +328,186 @@ describe("suwayomi plugin", function()
             }
         end
 
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadSourceLanguages = function() return { "en" } end,
+                loadDownloadDirectory = function() return "/books" end,
+                saveDownloadDirectory = function(_, path) return path end,
+                save = function(_, value) return value end,
+                saveSourceLanguages = function(_, value) return value end,
+            }
+        end
+
         package.loaded.main = nil
         package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
         package.loaded.suwayomi_ui = nil
+        package.loaded.suwayomi_settings = nil
 
         local plugin_class = require("main")
         local plugin = plugin_class{}
 
         plugin:browseSuwayomi()
 
-        assert.are.same({
-            { id = "m1", title = "One Piece" },
-        }, manga_shown)
-        assert.are.same({
-            { id = "c1", name = "Chapter 1" },
-        }, chapter_shown)
-        assert.are.equal("Download not implemented yet for Chapter 1", shown_messages[#shown_messages])
+        assert.are.equal(1, trapper_wrapped)
+        assert.are.equal("Downloading chapter… (tap to cancel)", trapper_subprocess_calls[1])
+        assert.are.equal("/books", downloader_called.download_directory)
+        assert.are.equal("Sousou no Frieren", downloader_called.manga.title)
+        assert.are.equal("Official_Vol. 1 Ch. 1", downloader_called.chapter.name)
+        assert.are.equal("Downloaded chapter to /books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", shown_messages[#shown_messages])
+    end)
+
+    it("shows the downloader error when chapter download fails", function()
+        package.preload.suwayomi_api = function()
+            return {
+                fetchSources = function()
+                    return { ok = true, sources = { { id = "s1", name = "MangaDex", lang = "en" } } }
+                end,
+                fetchMangaForSource = function(_, source_id)
+                    assert.are.equal("s1", source_id)
+                    return { ok = true, manga = { { id = "m1", title = "Sousou no Frieren" } } }
+                end,
+                fetchChaptersForManga = function(_, manga_id)
+                    assert.are.equal("m1", manga_id)
+                    return { ok = true, chapters = { { id = "398", name = "Official_Vol. 1 Ch. 1" } } }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                downloadChapter = function()
+                    return { ok = false, error = "Set up a download directory first." }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_ui = function()
+            return {
+                showSourcesMenu = function(sources, onSelect)
+                    onSelect(sources[1])
+                end,
+                showMangaMenu = function(manga, onSelect)
+                    onSelect(manga[1])
+                end,
+                showChapterMenu = function(chapters, onSelect)
+                    onSelect(chapters[1])
+                end,
+                showDirectoryChooser = function() end,
+                showLoginDialog = function() end,
+                showLanguageMenu = function() end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadSourceLanguages = function() return { "en" } end,
+                loadDownloadDirectory = function() return "/books" end,
+                saveDownloadDirectory = function(_, path) return path end,
+                save = function(_, value) return value end,
+                saveSourceLanguages = function(_, value) return value end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_ui = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+
+        plugin:browseSuwayomi()
+
+        assert.are.equal("Set up a download directory first.", shown_messages[#shown_messages])
+    end)
+
+    it("shows an interruption message when the subprocess is cancelled", function()
+        package.preload["ui/trapper"] = function()
+            return {
+                wrap = function(_, callback)
+                    trapper_wrapped = trapper_wrapped + 1
+                    return callback()
+                end,
+                dismissableRunInSubprocess = function(_, _, message)
+                    table.insert(trapper_subprocess_calls, message)
+                    return false
+                end,
+            }
+        end
+
+        package.preload.suwayomi_api = function()
+            return {
+                fetchSources = function()
+                    return { ok = true, sources = { { id = "s1", name = "MangaDex", lang = "en" } } }
+                end,
+                fetchMangaForSource = function()
+                    return { ok = true, manga = { { id = "m1", title = "Sousou no Frieren" } } }
+                end,
+                fetchChaptersForManga = function()
+                    return { ok = true, chapters = { { id = "398", name = "Official_Vol. 1 Ch. 1" } } }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                downloadChapter = function()
+                    return { ok = true, path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz" }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_ui = function()
+            return {
+                showSourcesMenu = function(sources, onSelect)
+                    onSelect(sources[1])
+                end,
+                showMangaMenu = function(manga, onSelect)
+                    onSelect(manga[1])
+                end,
+                showChapterMenu = function(chapters, onSelect)
+                    onSelect(chapters[1])
+                end,
+                showDirectoryChooser = function() end,
+                showLoginDialog = function() end,
+                showLanguageMenu = function() end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadSourceLanguages = function() return { "en" } end,
+                loadDownloadDirectory = function() return "/books" end,
+                saveDownloadDirectory = function(_, path) return path end,
+                save = function(_, value) return value end,
+                saveSourceLanguages = function(_, value) return value end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded["ui/trapper"] = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_ui = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+
+        plugin:browseSuwayomi()
+
+        assert.are.equal("Chapter download interrupted.", shown_messages[#shown_messages])
     end)
 
     it("shows a message when browse fails", function()
