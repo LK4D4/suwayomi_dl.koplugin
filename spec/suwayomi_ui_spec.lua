@@ -150,6 +150,35 @@ describe("suwayomi_ui", function()
         }, selected)
     end)
 
+    it("shows a chapter actions menu", function()
+        local ui = require("suwayomi_ui")
+        local selected = {}
+
+        ui.showChapterActionsMenu({
+            title = "Chapter 1",
+            actions = {
+                { id = "open", text = "Open" },
+                { id = "delete", text = "Delete from device" },
+                { id = "mark_read", text = "Mark as read" },
+            },
+        }, function(action)
+            table.insert(selected, action)
+        end)
+
+        assert.are.equal("Chapter 1", shown_dialog.title)
+        assert.are.equal("Open", shown_dialog.item_table[1].text)
+        assert.are.equal("Delete from device", shown_dialog.item_table[2].text)
+        assert.are.equal("Mark as read", shown_dialog.item_table[3].text)
+
+        shown_dialog.item_table[1].callback()
+        shown_dialog.item_table[3].callback()
+
+        assert.are.same({
+            { id = "open", text = "Open" },
+            { id = "mark_read", text = "Mark as read" },
+        }, selected)
+    end)
+
     it("shows a sources menu", function()
         local ui = require("suwayomi_ui")
         local selected = {}

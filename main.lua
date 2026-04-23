@@ -237,7 +237,7 @@ function SuwayomiPlugin:showChaptersForManga(manga)
         chapters = self:buildChapterMenuItems(manga, chapters),
     }
     self.current_chapter_menu = SuwayomiUI.showChapterMenu(self.current_chapter_options, function(chapter)
-        self:enqueueChapterDownload(manga, chapter)
+        self:showChapterActions(manga, chapter)
     end)
 end
 
@@ -428,6 +428,169 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
     return items
 end
 
+function SuwayomiPlugin:getChapterPath(manga, chapter)
+    local download_directory = SuwayomiSettings:loadDownloadDirectory()
+    if not download_directory or download_directory == "" then
+        return nil
+    end
+
+    local SuwayomiDownloader = require("suwayomi_downloader")
+    local _, chapter_path = SuwayomiDownloader:getTargetPath(download_directory, manga, chapter)
+    return chapter_path
+end
+
+function SuwayomiPlugin:isChapterDownloaded(manga, chapter)
+    local chapter_path = self:getChapterPath(manga, chapter)
+    if not chapter_path then
+        return false, nil
+    end
+
+    local SuwayomiDownloader = require("suwayomi_downloader")
+    return SuwayomiDownloader:chapterExists(chapter_path), chapter_path
+end
+
+function SuwayomiPlugin:getChapterActions(manga, chapter)
+    local downloaded = self:isChapterDownloaded(manga, chapter)
+    local actions = {}
+
+    if downloaded then
+        table.insert(actions, { id = "open", text = _("Open") })
+        table.insert(actions, { id = "delete", text = _("Delete from device") })
+    else
+        table.insert(actions, { id = "download", text = _("Download") })
+    end
+
+    table.insert(actions, { id = "mark_read", text = _("Mark as read") })
+    return actions
+end
+
+function SuwayomiPlugin:openChapter(manga, chapter)
+    local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
+    if not downloaded or not chapter_path then
+        self:showMessage(_("Download the chapter first."))
+        return false
+    end
+
+    local ok, ReaderUI = pcall(require, "apps/reader/readerui")
+    if not ok or not ReaderUI then
+        self:showMessage(_("KOReader could not open this chapter right now."))
+        return false
+    end
+
+    if ReaderUI.instance and ReaderUI.instance.switchDocument then
+        ReaderUI.instance:switchDocument(chapter_path)
+    elseif ReaderUI.showReader then
+        ReaderUI:showReader(chapter_path)
+    else
+        self:showMessage(_("KOReader could not open this chapter right now."))
+        return false
+    end
+
+    return true
+end
+
+function SuwayomiPlugin:deleteChapterFromDevice(manga, chapter)
+    local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
+    if not downloaded or not chapter_path then
+        self:showMessage(_("This chapter is not downloaded."))
+        return false
+    end
+
+    local metadata_path = self:getKoreaderMetadataPathForDocument(chapter_path)
+    os.remove(chapter_path)
+    if metadata_path then
+        os.remove(metadata_path)
+        os.remove(metadata_path .. ".old")
+        local metadata_dir = metadata_path:match("^(.*)/[^/]+$")
+        if metadata_dir then
+            os.remove(metadata_dir)
+        end
+    end
+
+    local ledger = self:loadChapterLedger()
+    local key = self:getChapterLedgerKey(manga, chapter)
+    local entry = ledger[key]
+    if entry then
+        entry.path = nil
+        if entry.read ~= true and entry.pending_read_sync ~= true then
+            ledger[key] = nil
+        else
+            ledger[key] = entry
+        end
+        self:saveChapterLedger(ledger)
+    end
+
+    self:refreshChapterMenu()
+    return true
+end
+
+function SuwayomiPlugin:markChapterRead(manga, chapter)
+    local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
+    local entry = self:upsertChapterLedgerEntry(manga, chapter, {
+        path = chapter_path,
+        read = true,
+        pending_read_sync = true,
+    })
+
+    local credentials = SuwayomiSettings:load()
+    if credentials.server_url ~= "" and SuwayomiAPI.markChapterRead then
+        local result = SuwayomiAPI.markChapterRead(credentials, entry.chapter_id)
+        if result.ok then
+            self:upsertChapterLedgerEntry(manga, chapter, {
+                path = chapter_path,
+                read = true,
+                pending_read_sync = nil,
+            })
+        else
+            self:showMessage(_(result.error))
+        end
+    end
+
+    if self.current_chapter_context and self.current_chapter_context.chapters then
+        for _, current in ipairs(self.current_chapter_context.chapters) do
+            if tostring(current.id or "") == tostring(chapter.id or "") then
+                current.is_read = true
+                break
+            end
+        end
+    end
+    self:refreshChapterMenu()
+    return true
+end
+
+function SuwayomiPlugin:performChapterAction(manga, chapter, action_id)
+    if action_id == "open" then
+        return self:openChapter(manga, chapter)
+    end
+    if action_id == "download" then
+        self:enqueueChapterDownload(manga, chapter)
+        return true
+    end
+    if action_id == "delete" then
+        return self:deleteChapterFromDevice(manga, chapter)
+    end
+    if action_id == "mark_read" then
+        return self:markChapterRead(manga, chapter)
+    end
+    return false
+end
+
+function SuwayomiPlugin:showChapterActions(manga, chapter)
+    if not SuwayomiUI.showChapterActionsMenu then
+        self:enqueueChapterDownload(manga, chapter)
+        return
+    end
+
+    local options = {
+        title = chapter.name,
+        actions = self:getChapterActions(manga, chapter),
+    }
+
+    SuwayomiUI.showChapterActionsMenu(options, function(action)
+        self:performChapterAction(manga, chapter, action.id)
+    end)
+end
+
 function SuwayomiPlugin:getCurrentDocumentPath()
     if not self.ui then
         return nil
@@ -544,7 +707,7 @@ function SuwayomiPlugin:refreshChapterMenu()
 
     if SuwayomiUI.updateChapterMenu then
         SuwayomiUI.updateChapterMenu(self.current_chapter_menu, options, function(chapter)
-            self:enqueueChapterDownload(self.current_chapter_context.manga, chapter)
+            self:showChapterActions(self.current_chapter_context.manga, chapter)
         end)
     elseif self.current_chapter_menu and self.current_chapter_menu.updateItems then
         self.current_chapter_menu:updateItems(nil, true)

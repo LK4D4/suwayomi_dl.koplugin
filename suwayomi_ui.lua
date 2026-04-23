@@ -82,6 +82,28 @@ function SuwayomiUI.showChapterMenu(chapter_list, onSelectCallback)
     return menu
 end
 
+function SuwayomiUI.showChapterActionsMenu(options, onSelectCallback)
+    local menu_table = {}
+    for _, action in ipairs(options.actions or {}) do
+        table.insert(menu_table, {
+            text = action.text,
+            callback = function()
+                if onSelectCallback then
+                    onSelectCallback(action)
+                end
+            end,
+        })
+    end
+
+    local menu = Menu:new{
+        title = options.title or _("Chapter actions"),
+        item_table = menu_table,
+    }
+    local UIManager = require("ui/uimanager")
+    UIManager:show(menu)
+    return menu
+end
+
 function SuwayomiUI.updateChapterMenu(menu, options, onSelectCallback)
     if not menu then
         return
