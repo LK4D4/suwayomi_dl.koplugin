@@ -4,6 +4,19 @@ local _ = require("gettext")
 
 local SuwayomiUI = {}
 
+function SuwayomiUI.buildChapterMenuTable(chapter_list, onSelectCallback)
+    local menu_table = {}
+    for _, chapter in ipairs(chapter_list) do
+        table.insert(menu_table, {
+            text = chapter.menu_text or chapter.name,
+            callback = function()
+                if onSelectCallback then onSelectCallback(chapter) end
+            end
+        })
+    end
+    return menu_table
+end
+
 function SuwayomiUI.showDirectoryChooser(callback)
     require("ui/downloadmgr"):new{
         title = _("Choose download directory"),
@@ -60,22 +73,24 @@ function SuwayomiUI.showChapterMenu(chapter_list, onSelectCallback)
         chapter_list = options.chapters
     end
 
-    local menu_table = {}
-    for _, chapter in ipairs(chapter_list) do
-        table.insert(menu_table, {
-            text = chapter.menu_text or chapter.name,
-            callback = function()
-                if onSelectCallback then onSelectCallback(chapter) end
-            end
-        })
-    end
-
     local menu = Menu:new{
         title = options.title or _("Suwayomi Chapters"),
-        item_table = menu_table,
+        item_table = SuwayomiUI.buildChapterMenuTable(chapter_list, onSelectCallback),
     }
     local UIManager = require("ui/uimanager")
     UIManager:show(menu)
+    return menu
+end
+
+function SuwayomiUI.updateChapterMenu(menu, options, onSelectCallback)
+    if not menu then
+        return
+    end
+
+    menu.item_table = SuwayomiUI.buildChapterMenuTable(options.chapters or {}, onSelectCallback)
+    if menu.updateItems then
+        menu:updateItems(nil, true)
+    end
 end
 
 function SuwayomiUI.showLanguageMenu(options)

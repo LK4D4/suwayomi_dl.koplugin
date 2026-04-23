@@ -33,6 +33,9 @@ end
 
 function SuwayomiPlugin:init()
     self:onDispatcherRegisterActions()
+    self.chapter_download_status = {}
+    self.chapter_download_queue = {}
+    self.chapter_download_active = false
     self.ui.menu:registerToMainMenu(self)
 end
 
@@ -185,15 +188,60 @@ function SuwayomiPlugin:showChaptersForManga(manga)
         return
     end
 
+    self.current_chapter_context = {
+        manga = manga,
+        chapters = result.chapters,
+    }
+
     local chapters = self:buildChapterMenuItems(manga, result.chapters)
-    SuwayomiUI.showChapterMenu({
+    self.current_chapter_options = {
         title = manga.title,
         chapters = chapters,
-    }, function(chapter)
-        Trapper:wrap(function()
-            self:downloadChapter(manga, chapter)
-        end)
+    }
+    self.current_chapter_menu = SuwayomiUI.showChapterMenu(self.current_chapter_options, function(chapter)
+        self:enqueueChapterDownload(manga, chapter)
     end)
+end
+
+function SuwayomiPlugin:getChapterDownloadKey(manga, chapter)
+    return tostring(manga.id or manga.title or "") .. ":" .. tostring(chapter.id or chapter.name or "")
+end
+
+function SuwayomiPlugin:getChapterDownloadStatus(manga, chapter)
+    self.chapter_download_status = self.chapter_download_status or {}
+    return self.chapter_download_status[self:getChapterDownloadKey(manga, chapter)]
+end
+
+function SuwayomiPlugin:setChapterDownloadStatus(manga, chapter, status)
+    self.chapter_download_status = self.chapter_download_status or {}
+    self.chapter_download_status[self:getChapterDownloadKey(manga, chapter)] = status
+end
+
+function SuwayomiPlugin:formatChapterMenuText(chapter, status)
+    if not status then
+        return chapter.name
+    end
+
+    if status.state == "queued" then
+        return chapter.name .. " [queued]"
+    end
+
+    if status.state == "downloading" then
+        if status.total and status.total > 0 and status.current then
+            return T(_("%1 [downloading %2/%3]"), chapter.name, status.current, status.total)
+        end
+        return chapter.name .. " [downloading]"
+    end
+
+    if status.state == "downloaded" then
+        return chapter.name .. " [downloaded]"
+    end
+
+    if status.state == "failed" then
+        return chapter.name .. " [failed]"
+    end
+
+    return chapter.name
 end
 
 function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
@@ -207,10 +255,10 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
             item[key] = value
         end
 
-        item.menu_text = item.name
+        item.menu_text = self:formatChapterMenuText(item, self:getChapterDownloadStatus(manga, item))
         if download_directory and download_directory ~= "" then
             local _, chapter_path = SuwayomiDownloader:getTargetPath(download_directory, manga, item)
-            if SuwayomiDownloader:chapterExists(chapter_path) then
+            if not self:getChapterDownloadStatus(manga, item) and SuwayomiDownloader:chapterExists(chapter_path) then
                 item.menu_text = item.name .. " [downloaded]"
             end
         end
@@ -219,6 +267,28 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
     end
 
     return items
+end
+
+function SuwayomiPlugin:refreshChapterMenu()
+    if not self.current_chapter_context then
+        return
+    end
+
+    local options = {
+        title = self.current_chapter_context.manga.title,
+        chapters = self:buildChapterMenuItems(self.current_chapter_context.manga, self.current_chapter_context.chapters),
+    }
+    self.current_chapter_options = self.current_chapter_options or {}
+    self.current_chapter_options.title = options.title
+    self.current_chapter_options.chapters = options.chapters
+
+    if SuwayomiUI.updateChapterMenu then
+        SuwayomiUI.updateChapterMenu(self.current_chapter_menu, options, function(chapter)
+            self:enqueueChapterDownload(self.current_chapter_context.manga, chapter)
+        end)
+    elseif self.current_chapter_menu and self.current_chapter_menu.updateItems then
+        self.current_chapter_menu:updateItems(nil, true)
+    end
 end
 
 function SuwayomiPlugin:formatDownloadMessage(result)
@@ -236,37 +306,120 @@ function SuwayomiPlugin:formatDownloadMessage(result)
     return T(_("Downloaded chapter to %1"), result.path or "")
 end
 
-function SuwayomiPlugin:downloadChapter(manga, chapter)
+function SuwayomiPlugin:enqueueChapterDownload(manga, chapter)
     local SuwayomiDownloader = require("suwayomi_downloader")
     local credentials = SuwayomiSettings:load()
     local download_directory = SuwayomiSettings:loadDownloadDirectory()
+    self.chapter_download_queue = self.chapter_download_queue or {}
     if not download_directory or download_directory == "" then
         SuwayomiUI.showDirectoryChooser(function(path)
             local saved_path = SuwayomiSettings:saveDownloadDirectory(path)
             self:showMessage(T(_("Suwayomi download directory saved: %1"), saved_path))
             UIManager:nextTick(function()
-                Trapper:wrap(function()
-                    self:downloadChapter(manga, chapter)
-                end)
+                self:enqueueChapterDownload(manga, chapter)
             end)
         end)
         return
     end
 
-    local completed, result = Trapper:dismissableRunInSubprocess(function()
-        return SuwayomiDownloader:downloadChapter(credentials, download_directory, manga, chapter)
-    end, _("Downloading chapter… (tap to cancel)"))
-
-    if not completed then
-        self:showMessage(_("Chapter download interrupted."))
+    local status = self:getChapterDownloadStatus(manga, chapter)
+    if status and (status.state == "queued" or status.state == "downloading") then
+        self:showMessage(_("Chapter download is already in progress."))
         return
     end
 
-    if result and result.ok then
-        self:showMessage(self:formatDownloadMessage(result))
-    else
-        self:showMessage(_((result and result.error) or _("Chapter download failed.")))
+    self:setChapterDownloadStatus(manga, chapter, { state = "queued" })
+    table.insert(self.chapter_download_queue, {
+        credentials = credentials,
+        download_directory = download_directory,
+        manga = manga,
+        chapter = chapter,
+        downloader = SuwayomiDownloader,
+    })
+    self:refreshChapterMenu()
+    UIManager:scheduleIn(0, function()
+        self:processChapterDownloadQueue()
+    end)
+end
+
+function SuwayomiPlugin:processChapterDownloadQueue()
+    if self.chapter_download_active then
+        return
     end
+
+    local queued = table.remove(self.chapter_download_queue, 1)
+    if not queued then
+        return
+    end
+
+    self.chapter_download_active = queued
+    local start_result = queued.downloader:startChapterDownload(queued.credentials, queued.download_directory, queued.manga, queued.chapter)
+    if not start_result.ok or start_result.skipped then
+        self.chapter_download_active = false
+        if start_result.ok then
+            self:setChapterDownloadStatus(queued.manga, queued.chapter, { state = "downloaded" })
+            self:showMessage(self:formatDownloadMessage(start_result))
+        else
+            self:setChapterDownloadStatus(queued.manga, queued.chapter, { state = "failed" })
+            self:showMessage(_(start_result.error))
+        end
+        self:refreshChapterMenu()
+        UIManager:scheduleIn(0, function()
+            self:processChapterDownloadQueue()
+        end)
+        return
+    end
+
+    queued.step_job = start_result.job
+    queued.path = start_result.path
+    self:setChapterDownloadStatus(queued.manga, queued.chapter, {
+        state = "downloading",
+        current = 0,
+        total = start_result.total,
+    })
+    self:refreshChapterMenu()
+    UIManager:scheduleIn(0, function()
+        self:processChapterDownloadStep()
+    end)
+end
+
+function SuwayomiPlugin:processChapterDownloadStep()
+    local active = self.chapter_download_active
+    if not active then
+        return
+    end
+
+    local result = active.downloader:downloadNextPage(active.step_job)
+    if not result.ok then
+        self:setChapterDownloadStatus(active.manga, active.chapter, { state = "failed" })
+        self.chapter_download_active = false
+        self:refreshChapterMenu()
+        self:showMessage(_(result.error))
+        UIManager:scheduleIn(0, function()
+            self:processChapterDownloadQueue()
+        end)
+        return
+    end
+
+    self:setChapterDownloadStatus(active.manga, active.chapter, {
+        state = result.done and "downloaded" or "downloading",
+        current = result.current,
+        total = result.total,
+    })
+    self:refreshChapterMenu()
+
+    if result.done then
+        self.chapter_download_active = false
+        self:showMessage(self:formatDownloadMessage(result))
+        UIManager:scheduleIn(0, function()
+            self:processChapterDownloadQueue()
+        end)
+        return
+    end
+
+    UIManager:scheduleIn(0, function()
+        self:processChapterDownloadStep()
+    end)
 end
 
 function SuwayomiPlugin:addToMainMenu(menu_items)

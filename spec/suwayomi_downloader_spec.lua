@@ -140,6 +140,88 @@ describe("suwayomi_downloader", function()
         }, added_files)
     end)
 
+    it("supports stepping through a chapter download with progress", function()
+        local added_files = {}
+
+        package.preload.suwayomi_api = function()
+            return {
+                fetchChapterPages = function()
+                    return {
+                        ok = true,
+                        pages = {
+                            "/page/0",
+                            "/page/1",
+                        },
+                    }
+                end,
+                downloadBinary = function(_, page_url)
+                    return {
+                        ok = true,
+                        body = page_url == "/page/0" and "page-one" or "page-two",
+                        content_type = "image/png",
+                    }
+                end,
+            }
+        end
+        package.preload.lfs = function()
+            return {
+                attributes = function()
+                    return nil
+                end,
+                mkdir = function()
+                    return true
+                end,
+            }
+        end
+        package.preload["ffi/archiver"] = function()
+            return {
+                Writer = {
+                    new = function()
+                        return {
+                            open = function() return true end,
+                            addFileFromMemory = function(_, entry_path, content)
+                                table.insert(added_files, { path = entry_path, content = content })
+                                return true
+                            end,
+                            close = function() end,
+                        }
+                    end,
+                },
+            }
+        end
+        package.preload["ffi/util"] = function()
+            return {
+                joinPath = function(base, segment)
+                    if base:sub(-1) == "/" then
+                        return base .. segment
+                    end
+                    return base .. "/" .. segment
+                end,
+            }
+        end
+
+        local downloader = require("suwayomi_downloader")
+        local start_result = downloader:startChapterDownload({}, "/books", { title = "Sousou no Frieren" }, { id = "398", name = "Official_Vol. 1 Ch. 1" })
+
+        assert.is_true(start_result.ok)
+        assert.are.equal(2, start_result.total)
+
+        local first = downloader:downloadNextPage(start_result.job)
+        local second = downloader:downloadNextPage(start_result.job)
+
+        assert.is_true(first.ok)
+        assert.is_false(first.done)
+        assert.are.equal(1, first.current)
+        assert.are.equal(2, first.total)
+        assert.is_true(second.ok)
+        assert.is_true(second.done)
+        assert.are.equal(2, second.current)
+        assert.are.same({
+            { path = "0001.png", content = "page-one" },
+            { path = "0002.png", content = "page-two" },
+        }, added_files)
+    end)
+
     it("removes a partial cbz when a page download fails", function()
         local removed_path
 
