@@ -20,10 +20,15 @@ jobs:
         luarocks --version
 
     - name: Install dependencies
-      run: luarocks install --local busted
+      run: |
+        luarocks install --local busted
+        luarocks install --local dkjson
 
     - name: Add LuaRocks user bin to PATH
       run: echo "$HOME/.luarocks/bin" >> "$GITHUB_PATH"
 
     - name: Run tests
       run: busted spec
+
+    - name: Check Lua syntax
+      run: luac5.1 -p main.lua suwayomi_api.lua suwayomi_downloader.lua suwayomi_settings.lua suwayomi_ui.lua _meta.lua
