@@ -60,6 +60,8 @@ describe("suwayomi_downloader", function()
 
     it("builds a cbz from fetched page bytes", function()
         local added_files = {}
+        local renamed_from
+        local renamed_to
 
         package.loaded.suwayomi_downloader = nil
         package.loaded.suwayomi_api = nil
@@ -104,7 +106,7 @@ describe("suwayomi_downloader", function()
                     new = function()
                         return {
                             open = function(_, path, format)
-                                assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", path)
+                                assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz.part", path)
                                 assert.are.equal("zip", format)
                                 return true
                             end,
@@ -129,11 +131,22 @@ describe("suwayomi_downloader", function()
             }
         end
 
+        local original_rename = os.rename
+        os.rename = function(from, to)
+            renamed_from = from
+            renamed_to = to
+            return true
+        end
+
         local downloader = require("suwayomi_downloader")
         local result = downloader:downloadChapter({ server_url = "https://suwayomi.example" }, "/books", { title = "Sousou no Frieren" }, { id = "398", name = "Official_Vol. 1 Ch. 1" })
 
+        os.rename = original_rename
+
         assert.is_true(result.ok)
         assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", result.path)
+        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz.part", renamed_from)
+        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", renamed_to)
         assert.are.same({
             { path = "0001.jpg", content = "page-one" },
             { path = "0002.jpg", content = "page-two" },
@@ -142,6 +155,10 @@ describe("suwayomi_downloader", function()
 
     it("supports stepping through a chapter download with progress", function()
         local added_files = {}
+        local original_rename = os.rename
+        os.rename = function()
+            return true
+        end
 
         package.preload.suwayomi_api = function()
             return {
@@ -220,10 +237,16 @@ describe("suwayomi_downloader", function()
             { path = "0001.png", content = "page-one" },
             { path = "0002.png", content = "page-two" },
         }, added_files)
+
+        os.rename = original_rename
     end)
 
     it("writes progress updates while downloading a chapter", function()
         local progress_path = os.tmpname()
+        local original_rename = os.rename
+        os.rename = function()
+            return true
+        end
 
         package.preload.suwayomi_api = function()
             return {
@@ -286,6 +309,7 @@ describe("suwayomi_downloader", function()
         local progress_content = progress_file:read("*a")
         progress_file:close()
         os.remove(progress_path)
+        os.rename = original_rename
 
         assert.is_true(result.ok)
         assert.are.equal("state=downloaded\ncurrent=2\ntotal=2\npath=/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz\n", progress_content)
@@ -357,7 +381,7 @@ describe("suwayomi_downloader", function()
         os.remove = original_remove
 
         assert.is_false(result.ok)
-        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", removed_path)
+        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz.part", removed_path)
     end)
 
     it("removes a partial cbz when archive writing fails", function()
@@ -425,7 +449,79 @@ describe("suwayomi_downloader", function()
 
         assert.is_false(result.ok)
         assert.are.equal("Could not write chapter archive.", result.error)
-        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", removed_path)
+        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz.part", removed_path)
+    end)
+
+    it("reports a failure when finalizing the completed cbz fails", function()
+        local removed_path
+
+        package.preload.suwayomi_api = function()
+            return {
+                fetchChapterPages = function()
+                    return {
+                        ok = true,
+                        chapter = { id = "398", name = "Official_Vol. 1 Ch. 1", manga_title = "Sousou no Frieren" },
+                        pages = { "/page/0" },
+                    }
+                end,
+                downloadBinary = function()
+                    return { ok = true, body = "page-one", content_type = "image/jpeg" }
+                end,
+            }
+        end
+        package.preload.lfs = function()
+            return {
+                attributes = function()
+                    return nil
+                end,
+                mkdir = function()
+                    return true
+                end,
+            }
+        end
+        package.preload["ffi/archiver"] = function()
+            return {
+                Writer = {
+                    new = function()
+                        return {
+                            open = function() return true end,
+                            addFileFromMemory = function() return true end,
+                            close = function() end,
+                        }
+                    end,
+                }
+            }
+        end
+        package.preload["ffi/util"] = function()
+            return {
+                joinPath = function(base, segment)
+                    if base:sub(-1) == "/" then
+                        return base .. segment
+                    end
+                    return base .. "/" .. segment
+                end,
+            }
+        end
+
+        local original_rename = os.rename
+        os.rename = function()
+            return nil
+        end
+        local original_remove = os.remove
+        os.remove = function(path)
+            removed_path = path
+            return true
+        end
+
+        local downloader = require("suwayomi_downloader")
+        local result = downloader:downloadChapter({}, "/books", { title = "Sousou no Frieren" }, { id = "398", name = "Official_Vol. 1 Ch. 1" })
+
+        os.rename = original_rename
+        os.remove = original_remove
+
+        assert.is_false(result.ok)
+        assert.are.equal("Could not finalize chapter archive.", result.error)
+        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz.part", removed_path)
     end)
 
     it("reports a manga directory creation failure before opening the archive", function()
