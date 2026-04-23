@@ -530,25 +530,11 @@ end
 
 function SuwayomiPlugin:markChapterRead(manga, chapter)
     local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
-    local entry = self:upsertChapterLedgerEntry(manga, chapter, {
+    self:upsertChapterLedgerEntry(manga, chapter, {
         path = chapter_path,
         read = true,
         pending_read_sync = true,
     })
-
-    local credentials = SuwayomiSettings:load()
-    if credentials.server_url ~= "" and SuwayomiAPI.markChapterRead then
-        local result = SuwayomiAPI.markChapterRead(credentials, entry.chapter_id)
-        if result.ok then
-            self:upsertChapterLedgerEntry(manga, chapter, {
-                path = chapter_path,
-                read = true,
-                pending_read_sync = nil,
-            })
-        else
-            self:showMessage(_(result.error))
-        end
-    end
 
     if self.current_chapter_context and self.current_chapter_context.chapters then
         for _, current in ipairs(self.current_chapter_context.chapters) do
@@ -559,6 +545,7 @@ function SuwayomiPlugin:markChapterRead(manga, chapter)
         end
     end
     self:refreshChapterMenu()
+    self:schedulePendingReadSync()
     return true
 end
 
@@ -666,20 +653,7 @@ function SuwayomiPlugin:markLedgerEntryRead(entry)
     ledger[key].pending_read_sync = true
     self:saveChapterLedger(ledger)
 
-    local credentials = SuwayomiSettings:load()
-    if credentials.server_url ~= "" and SuwayomiAPI.markChapterRead then
-        local result = SuwayomiAPI.markChapterRead(credentials, entry.chapter_id)
-        if result.ok then
-            ledger = self:loadChapterLedger()
-            if ledger[key] then
-                ledger[key].pending_read_sync = nil
-                self:saveChapterLedger(ledger)
-            end
-        else
-            self:showMessage(_(result.error))
-        end
-    end
-
+    self:schedulePendingReadSync()
     return true
 end
 
@@ -713,6 +687,18 @@ function SuwayomiPlugin:syncPendingReadMarks(credentials)
     end
 
     return synced
+end
+
+function SuwayomiPlugin:schedulePendingReadSync()
+    if self.pending_read_sync_scheduled then
+        return
+    end
+
+    self.pending_read_sync_scheduled = true
+    UIManager:scheduleIn(0, function()
+        self.pending_read_sync_scheduled = false
+        self:syncPendingReadMarks()
+    end)
 end
 
 function SuwayomiPlugin:onCloseDocument()

@@ -948,6 +948,75 @@ describe("suwayomi plugin", function()
         assert.are.equal("Mark as unread", actions[2].text)
     end)
 
+    it("marks a chapter read locally before syncing it in the background", function()
+        local saved_ledger = {}
+        local marked_chapter_id
+
+        package.preload.suwayomi_api = function()
+            return {
+                markChapterRead = function(_, chapter_id)
+                    marked_chapter_id = chapter_id
+                    return { ok = true, chapter = { id = chapter_id, is_read = true } }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function(_, chapter_path)
+                    return chapter_path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz"
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return saved_ledger end,
+                saveChapterLedger = function(_, ledger)
+                    saved_ledger = ledger
+                    return ledger
+                end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        plugin.current_chapter_context = {
+            manga = { id = "m1", title = "Sousou no Frieren" },
+            chapters = { { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = false } },
+        }
+
+        plugin:markChapterRead(
+            { id = "m1", title = "Sousou no Frieren" },
+            { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = false }
+        )
+
+        assert.is_true(saved_ledger["m1:398"].read)
+        assert.is_true(saved_ledger["m1:398"].pending_read_sync)
+        assert.is_true(plugin.current_chapter_context.chapters[1].is_read)
+        assert.is_nil(marked_chapter_id)
+
+        run_scheduled_callbacks()
+
+        assert.are.equal("398", marked_chapter_id)
+        assert.is_nil(saved_ledger["m1:398"].pending_read_sync)
+    end)
+
     it("keeps locally read chapters read even when Suwayomi reports unread", function()
         local shown_chapter_menu
         local saved_ledger = {
@@ -1189,7 +1258,13 @@ return {
         plugin:onCloseDocument()
 
         assert.is_true(saved_ledger["m1:398"].read)
+        assert.is_true(saved_ledger["m1:398"].pending_read_sync)
+        assert.is_nil(marked_chapter_id)
+
+        run_scheduled_callbacks()
+
         assert.are.equal("398", marked_chapter_id)
+        assert.is_nil(saved_ledger["m1:398"].pending_read_sync)
     end)
 
     it("keeps a pending read sync when Suwayomi cannot be updated", function()
