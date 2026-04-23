@@ -19,6 +19,22 @@ function Downloader:getTargetPath(download_directory, manga, chapter)
     return manga_dir, chapter_path
 end
 
+function Downloader:chapterExists(chapter_path)
+    return lfs.attributes(chapter_path, "mode") == "file"
+end
+
+function Downloader:ensureDirectory(path)
+    if lfs.attributes(path, "mode") == "directory" then
+        return true
+    end
+
+    if lfs.mkdir(path) then
+        return true
+    end
+
+    return false, "Could not create manga folder."
+end
+
 function Downloader:cleanupPartialFile(path)
     if path and path ~= "" then
         os.remove(path)
@@ -42,8 +58,8 @@ function Downloader:downloadChapter(credentials, download_directory, manga, chap
     end
 
     local manga_dir, chapter_path = self:getTargetPath(download_directory, manga, chapter)
-    if lfs.attributes(chapter_path, "mode") == "file" then
-        return { ok = false, error = "Chapter already exists: " .. chapter_path }
+    if self:chapterExists(chapter_path) then
+        return { ok = true, skipped = true, path = chapter_path }
     end
 
     local page_result = SuwayomiAPI.fetchChapterPages(credentials, chapter.id)
@@ -54,7 +70,10 @@ function Downloader:downloadChapter(credentials, download_directory, manga, chap
         return { ok = false, error = "Suwayomi server did not return chapter pages." }
     end
 
-    lfs.mkdir(manga_dir)
+    local directory_ok, directory_error = self:ensureDirectory(manga_dir)
+    if not directory_ok then
+        return { ok = false, error = directory_error }
+    end
 
     local writer = Archiver.Writer:new()
     if not writer:open(chapter_path, "zip") then

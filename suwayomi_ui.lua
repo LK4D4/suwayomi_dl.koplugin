@@ -54,10 +54,16 @@ function SuwayomiUI.showMangaMenu(manga_list, onSelectCallback)
 end
 
 function SuwayomiUI.showChapterMenu(chapter_list, onSelectCallback)
+    local options = {}
+    if type(chapter_list) == "table" and chapter_list.chapters then
+        options = chapter_list
+        chapter_list = options.chapters
+    end
+
     local menu_table = {}
     for _, chapter in ipairs(chapter_list) do
         table.insert(menu_table, {
-            text = chapter.name,
+            text = chapter.menu_text or chapter.name,
             callback = function()
                 if onSelectCallback then onSelectCallback(chapter) end
             end
@@ -65,7 +71,7 @@ function SuwayomiUI.showChapterMenu(chapter_list, onSelectCallback)
     end
 
     local menu = Menu:new{
-        title = _("Suwayomi Chapters"),
+        title = options.title or _("Suwayomi Chapters"),
         item_table = menu_table,
     }
     local UIManager = require("ui/uimanager")

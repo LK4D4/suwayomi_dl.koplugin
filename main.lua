@@ -185,17 +185,74 @@ function SuwayomiPlugin:showChaptersForManga(manga)
         return
     end
 
-    SuwayomiUI.showChapterMenu(result.chapters, function(chapter)
+    local chapters = self:buildChapterMenuItems(manga, result.chapters)
+    SuwayomiUI.showChapterMenu({
+        title = manga.title,
+        chapters = chapters,
+    }, function(chapter)
         Trapper:wrap(function()
             self:downloadChapter(manga, chapter)
         end)
     end)
 end
 
+function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
+    local SuwayomiDownloader = require("suwayomi_downloader")
+    local download_directory = SuwayomiSettings:loadDownloadDirectory()
+    local items = {}
+
+    for _, chapter in ipairs(chapters or {}) do
+        local item = {}
+        for key, value in pairs(chapter) do
+            item[key] = value
+        end
+
+        item.menu_text = item.name
+        if download_directory and download_directory ~= "" then
+            local _, chapter_path = SuwayomiDownloader:getTargetPath(download_directory, manga, item)
+            if SuwayomiDownloader:chapterExists(chapter_path) then
+                item.menu_text = item.name .. " [downloaded]"
+            end
+        end
+
+        table.insert(items, item)
+    end
+
+    return items
+end
+
+function SuwayomiPlugin:formatDownloadMessage(result)
+    local filename = result.path and result.path:match("([^/]+)$") or nil
+    local directory = result.path and result.path:match("^(.*)/[^/]+$") or nil
+
+    if result.skipped then
+        return T(_("Already downloaded: %1"), filename or _("chapter"))
+    end
+
+    if filename and directory then
+        return T(_("Saved %1 in %2"), filename, directory)
+    end
+
+    return T(_("Downloaded chapter to %1"), result.path or "")
+end
+
 function SuwayomiPlugin:downloadChapter(manga, chapter)
     local SuwayomiDownloader = require("suwayomi_downloader")
     local credentials = SuwayomiSettings:load()
     local download_directory = SuwayomiSettings:loadDownloadDirectory()
+    if not download_directory or download_directory == "" then
+        SuwayomiUI.showDirectoryChooser(function(path)
+            local saved_path = SuwayomiSettings:saveDownloadDirectory(path)
+            self:showMessage(T(_("Suwayomi download directory saved: %1"), saved_path))
+            UIManager:nextTick(function()
+                Trapper:wrap(function()
+                    self:downloadChapter(manga, chapter)
+                end)
+            end)
+        end)
+        return
+    end
+
     local completed, result = Trapper:dismissableRunInSubprocess(function()
         return SuwayomiDownloader:downloadChapter(credentials, download_directory, manga, chapter)
     end, _("Downloading chapter… (tap to cancel)"))
@@ -206,7 +263,7 @@ function SuwayomiPlugin:downloadChapter(manga, chapter)
     end
 
     if result and result.ok then
-        self:showMessage(T(_("Downloaded chapter to %1"), result.path))
+        self:showMessage(self:formatDownloadMessage(result))
     else
         self:showMessage(_((result and result.error) or _("Chapter download failed.")))
     end

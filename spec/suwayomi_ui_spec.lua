@@ -128,21 +128,24 @@ describe("suwayomi_ui", function()
         local selected = {}
 
         ui.showChapterMenu({
-            { id = "c1", name = "Chapter 1" },
-            { id = "c2", name = "Chapter 2" },
+            title = "Sousou no Frieren",
+            chapters = {
+                { id = "c1", name = "Chapter 1", menu_text = "Chapter 1 [downloaded]" },
+                { id = "c2", name = "Chapter 2" },
+            },
         }, function(chapter)
             table.insert(selected, chapter)
         end)
 
-        assert.are.equal("Suwayomi Chapters", shown_dialog.title)
-        assert.are.equal("Chapter 1", shown_dialog.item_table[1].text)
+        assert.are.equal("Sousou no Frieren", shown_dialog.title)
+        assert.are.equal("Chapter 1 [downloaded]", shown_dialog.item_table[1].text)
         assert.are.equal("Chapter 2", shown_dialog.item_table[2].text)
 
         shown_dialog.item_table[1].callback()
         shown_dialog.item_table[2].callback()
 
         assert.are.same({
-            { id = "c1", name = "Chapter 1" },
+            { id = "c1", name = "Chapter 1", menu_text = "Chapter 1 [downloaded]" },
             { id = "c2", name = "Chapter 2" },
         }, selected)
     end)

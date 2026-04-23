@@ -53,8 +53,9 @@ describe("suwayomi_downloader", function()
         local downloader = require("suwayomi_downloader")
         local result = downloader:downloadChapter({}, "/books", { title = "Sousou no Frieren" }, { id = "398", name = "Official_Vol. 1 Ch. 1" })
 
-        assert.is_false(result.ok)
-        assert.are.equal("Chapter already exists: /books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", result.error)
+        assert.is_true(result.ok)
+        assert.is_true(result.skipped)
+        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", result.path)
     end)
 
     it("builds a cbz from fetched page bytes", function()
@@ -274,6 +275,59 @@ describe("suwayomi_downloader", function()
         assert.is_false(result.ok)
         assert.are.equal("Could not write chapter archive.", result.error)
         assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", removed_path)
+    end)
+
+    it("reports a manga directory creation failure before opening the archive", function()
+        package.preload.suwayomi_api = function()
+            return {
+                fetchChapterPages = function()
+                    return {
+                        ok = true,
+                        chapter = { id = "398", name = "Official_Vol. 1 Ch. 1", manga_title = "Sousou no Frieren" },
+                        pages = { "/page/0" },
+                    }
+                end,
+            }
+        end
+        package.preload.lfs = function()
+            return {
+                attributes = function()
+                    return nil
+                end,
+                mkdir = function()
+                    return nil
+                end,
+            }
+        end
+        package.preload["ffi/archiver"] = function()
+            return {
+                Writer = {
+                    new = function()
+                        return {
+                            open = function()
+                                error("archive should not open when mkdir fails")
+                            end,
+                        }
+                    end,
+                },
+            }
+        end
+        package.preload["ffi/util"] = function()
+            return {
+                joinPath = function(base, segment)
+                    if base:sub(-1) == "/" then
+                        return base .. segment
+                    end
+                    return base .. "/" .. segment
+                end,
+            }
+        end
+
+        local downloader = require("suwayomi_downloader")
+        local result = downloader:downloadChapter({}, "/books", { title = "Sousou no Frieren" }, { id = "398", name = "Official_Vol. 1 Ch. 1" })
+
+        assert.is_false(result.ok)
+        assert.are.equal("Could not create manga folder.", result.error)
     end)
 
     it("neutralizes traversal-only manga and chapter names", function()

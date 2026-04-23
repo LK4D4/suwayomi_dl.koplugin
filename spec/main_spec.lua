@@ -278,8 +278,9 @@ describe("suwayomi plugin", function()
         }, shown_sources)
     end)
 
-    it("downloads a selected chapter and shows the saved path", function()
+    it("downloads a selected chapter and shows the saved folder", function()
         local downloader_called
+        local shown_chapter_menu
 
         package.preload.suwayomi_api = function()
             return {
@@ -292,13 +293,25 @@ describe("suwayomi plugin", function()
                 end,
                 fetchChaptersForManga = function(_, manga_id)
                     assert.are.equal("m1", manga_id)
-                    return { ok = true, chapters = { { id = "398", name = "Official_Vol. 1 Ch. 1" } } }
+                    return {
+                        ok = true,
+                        chapters = {
+                            { id = "398", name = "Official_Vol. 1 Ch. 1" },
+                            { id = "399", name = "Ch. 2" },
+                        },
+                    }
                 end,
             }
         end
 
         package.preload.suwayomi_downloader = function()
             return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title, download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function(_, path)
+                    return path:match("Ch%. 2%.cbz$") ~= nil
+                end,
                 downloadChapter = function(_, credentials, download_directory, manga, chapter)
                     downloader_called = {
                         credentials = credentials,
@@ -319,8 +332,9 @@ describe("suwayomi plugin", function()
                 showMangaMenu = function(manga, onSelect)
                     onSelect(manga[1])
                 end,
-                showChapterMenu = function(chapters, onSelect)
-                    onSelect(chapters[1])
+                showChapterMenu = function(options, onSelect)
+                    shown_chapter_menu = options
+                    onSelect(options.chapters[1])
                 end,
                 showDirectoryChooser = function() end,
                 showLoginDialog = function() end,
@@ -357,7 +371,10 @@ describe("suwayomi plugin", function()
         assert.are.equal("/books", downloader_called.download_directory)
         assert.are.equal("Sousou no Frieren", downloader_called.manga.title)
         assert.are.equal("Official_Vol. 1 Ch. 1", downloader_called.chapter.name)
-        assert.are.equal("Downloaded chapter to /books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", shown_messages[#shown_messages])
+        assert.are.equal("Sousou no Frieren", shown_chapter_menu.title)
+        assert.are.equal("Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.are.equal("Ch. 2 [downloaded]", shown_chapter_menu.chapters[2].menu_text)
+        assert.are.equal("Saved Official_Vol. 1 Ch. 1.cbz in /books/Sousou no Frieren", shown_messages[#shown_messages])
     end)
 
     it("shows the downloader error when chapter download fails", function()
@@ -379,6 +396,12 @@ describe("suwayomi plugin", function()
 
         package.preload.suwayomi_downloader = function()
             return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title, download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function()
+                    return false
+                end,
                 downloadChapter = function()
                     return { ok = false, error = "Set up a download directory first." }
                 end,
@@ -393,8 +416,8 @@ describe("suwayomi plugin", function()
                 showMangaMenu = function(manga, onSelect)
                     onSelect(manga[1])
                 end,
-                showChapterMenu = function(chapters, onSelect)
-                    onSelect(chapters[1])
+                showChapterMenu = function(options, onSelect)
+                    onSelect(options.chapters[1])
                 end,
                 showDirectoryChooser = function() end,
                 showLoginDialog = function() end,
@@ -429,6 +452,167 @@ describe("suwayomi plugin", function()
         assert.are.equal("Set up a download directory first.", shown_messages[#shown_messages])
     end)
 
+    it("shows a neutral message when the chapter already exists locally", function()
+        package.preload.suwayomi_api = function()
+            return {
+                fetchSources = function()
+                    return { ok = true, sources = { { id = "s1", name = "MangaDex", lang = "en" } } }
+                end,
+                fetchMangaForSource = function()
+                    return { ok = true, manga = { { id = "m1", title = "Sousou no Frieren" } } }
+                end,
+                fetchChaptersForManga = function()
+                    return { ok = true, chapters = { { id = "398", name = "Official_Vol. 1 Ch. 1" } } }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title, download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function()
+                    return true
+                end,
+                downloadChapter = function()
+                    return { ok = true, skipped = true, path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz" }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_ui = function()
+            return {
+                showSourcesMenu = function(sources, onSelect)
+                    onSelect(sources[1])
+                end,
+                showMangaMenu = function(manga, onSelect)
+                    onSelect(manga[1])
+                end,
+                showChapterMenu = function(options, onSelect)
+                    onSelect(options.chapters[1])
+                end,
+                showDirectoryChooser = function() end,
+                showLoginDialog = function() end,
+                showLanguageMenu = function() end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadSourceLanguages = function() return { "en" } end,
+                loadDownloadDirectory = function() return "/books" end,
+                saveDownloadDirectory = function(_, path) return path end,
+                save = function(_, value) return value end,
+                saveSourceLanguages = function(_, value) return value end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_ui = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+
+        plugin:browseSuwayomi()
+
+        assert.are.equal("Already downloaded: Official_Vol. 1 Ch. 1.cbz", shown_messages[#shown_messages])
+    end)
+
+    it("opens the directory chooser and retries the chapter when no download directory is set", function()
+        local downloader_calls = 0
+
+        package.preload.suwayomi_api = function()
+            return {
+                fetchSources = function()
+                    return { ok = true, sources = { { id = "s1", name = "MangaDex", lang = "en" } } }
+                end,
+                fetchMangaForSource = function()
+                    return { ok = true, manga = { { id = "m1", title = "Sousou no Frieren" } } }
+                end,
+                fetchChaptersForManga = function()
+                    return { ok = true, chapters = { { id = "398", name = "Official_Vol. 1 Ch. 1" } } }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title, download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function()
+                    return false
+                end,
+                downloadChapter = function(_, _, download_directory)
+                    downloader_calls = downloader_calls + 1
+                    assert.are.equal("/storage/emulated/0/Books/Manga", download_directory)
+                    return { ok = true, path = "/storage/emulated/0/Books/Manga/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz" }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_ui = function()
+            return {
+                showSourcesMenu = function(sources, onSelect)
+                    onSelect(sources[1])
+                end,
+                showMangaMenu = function(manga, onSelect)
+                    onSelect(manga[1])
+                end,
+                showChapterMenu = function(options, onSelect)
+                    onSelect(options.chapters[1])
+                end,
+                showDirectoryChooser = function(callback)
+                    directory_chooser_callback = callback
+                end,
+                showLoginDialog = function() end,
+                showLanguageMenu = function() end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadSourceLanguages = function() return { "en" } end,
+                loadDownloadDirectory = function()
+                    return saved_download_directory or ""
+                end,
+                saveDownloadDirectory = function(_, path)
+                    saved_download_directory = path
+                    return path
+                end,
+                save = function(_, value) return value end,
+                saveSourceLanguages = function(_, value) return value end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_ui = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+
+        plugin:browseSuwayomi()
+        directory_chooser_callback("/storage/emulated/0/Books/Manga")
+
+        assert.are.equal("/storage/emulated/0/Books/Manga", saved_download_directory)
+        assert.are.equal(2, trapper_wrapped)
+        assert.are.equal(1, downloader_calls)
+        assert.are.equal("Saved Official_Vol. 1 Ch. 1.cbz in /storage/emulated/0/Books/Manga/Sousou no Frieren", shown_messages[#shown_messages])
+    end)
+
     it("shows an interruption message when the subprocess is cancelled", function()
         package.preload["ui/trapper"] = function()
             return {
@@ -459,6 +643,12 @@ describe("suwayomi plugin", function()
 
         package.preload.suwayomi_downloader = function()
             return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title, download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function()
+                    return false
+                end,
                 downloadChapter = function()
                     return { ok = true, path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz" }
                 end,
@@ -473,8 +663,8 @@ describe("suwayomi plugin", function()
                 showMangaMenu = function(manga, onSelect)
                     onSelect(manga[1])
                 end,
-                showChapterMenu = function(chapters, onSelect)
-                    onSelect(chapters[1])
+                showChapterMenu = function(options, onSelect)
+                    onSelect(options.chapters[1])
                 end,
                 showDirectoryChooser = function() end,
                 showLoginDialog = function() end,
