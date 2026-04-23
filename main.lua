@@ -494,11 +494,7 @@ function SuwayomiPlugin:pollChapterDownload()
         self.chapter_download_active = false
         os.remove(active.progress_path)
         if progress and (progress.state == "downloaded" or progress.state == "skipped") then
-            self:showMessage(self:formatDownloadMessage({
-                ok = true,
-                skipped = progress.state == "skipped",
-                path = progress.path,
-            }))
+            -- The chapter row now carries the success state; avoid an extra popup.
         elseif progress and progress.state == "failed" then
             self:showMessage(_(progress.error or _("Chapter download failed.")))
         else
