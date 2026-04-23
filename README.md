@@ -8,6 +8,7 @@ This plugin is experimental and still under active development.
 
 - Expect rough edges and incomplete features.
 - The login flow, source browsing, manga browsing, chapter browsing, chapter actions menu, single-chapter downloads, and read-state syncing are currently implemented and being tested.
+- At the moment, the plugin is only considered usable with the Suwayomi **Local Source**.
 - Bulk selection and bulk downloads are not complete yet.
 
 ## Features
@@ -20,6 +21,9 @@ This plugin is experimental and still under active development.
 - Chapter actions menu with `Open`, `Download`, `Delete from device`, and `Mark as read` / `Mark as unread`
 - Read-state tracking from Suwayomi, the local plugin ledger, and KOReader sidecar metadata
 - Background retry of pending read syncs when Suwayomi is temporarily unavailable
+
+Current limitation:
+- The practical, tested flow currently targets the Suwayomi **Local Source**. Other Suwayomi sources may browse correctly, but downloading and reading workflows outside Local Source are not yet considered supported.
 
 ## Installation
 
