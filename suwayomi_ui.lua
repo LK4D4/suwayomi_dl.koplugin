@@ -84,12 +84,15 @@ function SuwayomiUI.showChapterMenu(chapter_list, onSelectCallback)
 end
 
 function SuwayomiUI.showChapterActionsMenu(options, onSelectCallback)
+    local UIManager = require("ui/uimanager")
+    local dialog
     local buttons = {}
     local row = {}
     for _, action in ipairs(options.actions or {}) do
         table.insert(row, {
             text = action.text,
             callback = function()
+                UIManager:close(dialog)
                 if onSelectCallback then
                     onSelectCallback(action)
                 end
@@ -105,11 +108,10 @@ function SuwayomiUI.showChapterActionsMenu(options, onSelectCallback)
         table.insert(buttons, row)
     end
 
-    local dialog = ButtonDialog:new{
+    dialog = ButtonDialog:new{
         title = options.title or _("Chapter actions"),
         buttons = buttons,
     }
-    local UIManager = require("ui/uimanager")
     UIManager:show(dialog)
     return dialog
 end

@@ -189,6 +189,27 @@ describe("suwayomi_ui", function()
         }, selected)
     end)
 
+    it("closes the chapter actions dialog before running the action callback", function()
+        local ui = require("suwayomi_ui")
+        local selected
+
+        ui.showChapterActionsMenu({
+            title = "Chapter 1",
+            actions = {
+                { id = "open", text = "Open" },
+            },
+        }, function(action)
+            selected = action
+            table.insert(events, "action")
+        end)
+
+        shown_dialog.buttons[1][1].callback()
+
+        assert.are.same({ "close", "action" }, events)
+        assert.are.equal(shown_dialog, closed_dialog)
+        assert.are.same({ id = "open", text = "Open" }, selected)
+    end)
+
     it("shows a sources menu", function()
         local ui = require("suwayomi_ui")
         local selected = {}
