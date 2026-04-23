@@ -7,32 +7,49 @@ A KOReader plugin that allows you to browse your self-hosted [Suwayomi (Tachides
 This plugin is experimental and still under active development.
 
 - Expect rough edges and incomplete features.
-- The login flow, source browsing, manga browsing, chapter browsing, and single-chapter downloads are currently implemented and being tested.
-- Bulk downloads and background queueing are not complete yet.
+- The login flow, source browsing, manga browsing, chapter browsing, chapter actions menu, single-chapter downloads, and read-state syncing are currently implemented and being tested.
+- Bulk selection and bulk downloads are not complete yet.
 
 ## Features
 - Native KOReader UI integration
 - Browse sources, manga, and chapters directly from the server
-- Single-chapter downloading of chapters
-- Select custom download directories (perfect for treating downloaded chapters as local books)
+- Basic auth login against a self-hosted Suwayomi server
+- Filter sources by language
+- Select a custom download directory
+- Download individual chapters as `.cbz`
+- Chapter actions menu with `Open`, `Download`, `Delete from device`, and `Mark as read` / `Mark as unread`
+- Read-state tracking from Suwayomi, the local plugin ledger, and KOReader sidecar metadata
+- Background retry of pending read syncs when Suwayomi is temporarily unavailable
 
 ## Installation
+
+Recommended:
+
+1. Open KOReader.
+2. Go to **Tools** > **App Store**.
+3. Find `LK4D4/suwayomi_dl.koplugin`.
+4. Install the plugin from the App Store.
+5. Restart KOReader.
+
+Manual installation:
 
 1. Download the latest `suwayomi_dl.koplugin.zip` from the [Releases page](../../releases).
 2. Extract the zip file.
 3. Copy the `suwayomi_dl.koplugin` directory to the KOReader plugins directory on your device:
-   - For Android/e-readers: Usually `koreader/plugins/`
-   - So the final path should be `koreader/plugins/suwayomi_dl.koplugin/main.lua`
+   - For Android/e-readers: usually `koreader/plugins/`
+   - The final path should be `koreader/plugins/suwayomi_dl.koplugin`
 4. Restart KOReader.
 
 ## Usage
 
 1. Open the **Search** tab in KOReader's top menu.
 2. Tap **Suwayomi**.
-3. First time use: Tap **Setup login information** to enter your Suwayomi Server URL, username, and password.
-4. Tap **Setup download directory** to choose where manga will be downloaded.
-5. Tap **Browse Suwayomi** to explore the server.
-6. Tap a chapter to download it into the configured directory as a `.cbz`.
+3. First time use: Tap **Setup login information** to enter your Suwayomi server URL, username, and password.
+4. Optionally tap **Setup source languages** to filter the source list.
+5. Tap **Setup download directory** to choose where manga will be downloaded.
+6. Tap **Browse Suwayomi** to explore the server.
+7. Tap a chapter to open the chapter actions dialog.
+8. Use the chapter actions dialog to open, download, delete, or toggle read state for that chapter.
 
 ## Testing Locally
 
