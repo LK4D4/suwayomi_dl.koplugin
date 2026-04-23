@@ -101,4 +101,13 @@ function SuwayomiSettings:saveDownloadQueue(jobs)
     return normalized
 end
 
+function SuwayomiSettings:loadChapterLedger()
+    return self:open():readSetting("chapter_ledger", {})
+end
+
+function SuwayomiSettings:saveChapterLedger(ledger)
+    self:open():saveSetting("chapter_ledger", ledger or {}):flush()
+    return ledger or {}
+end
+
 return SuwayomiSettings

@@ -224,15 +224,15 @@ function SuwayomiPlugin:showChaptersForManga(manga)
         return
     end
 
+    local chapters = self:mergeChaptersWithReadLedger(manga, result.chapters)
     self.current_chapter_context = {
         manga = manga,
-        chapters = result.chapters,
+        chapters = chapters,
     }
 
-    local chapters = self:buildChapterMenuItems(manga, result.chapters)
     self.current_chapter_options = {
         title = manga.title,
-        chapters = chapters,
+        chapters = self:buildChapterMenuItems(manga, chapters),
     }
     self.current_chapter_menu = SuwayomiUI.showChapterMenu(self.current_chapter_options, function(chapter)
         self:enqueueChapterDownload(manga, chapter)
@@ -259,6 +259,85 @@ function SuwayomiPlugin:formatChapterMenuText(chapter, status)
     return self:getDownloadQueue():formatChapterMenuText(chapter, status)
 end
 
+function SuwayomiPlugin:loadChapterLedger()
+    if not SuwayomiSettings.loadChapterLedger then
+        return {}
+    end
+    return SuwayomiSettings:loadChapterLedger() or {}
+end
+
+function SuwayomiPlugin:saveChapterLedger(ledger)
+    if not SuwayomiSettings.saveChapterLedger then
+        return ledger or {}
+    end
+    return SuwayomiSettings:saveChapterLedger(ledger or {})
+end
+
+function SuwayomiPlugin:upsertChapterLedgerEntry(manga, chapter, updates)
+    local ledger = self:loadChapterLedger()
+    local key = self:getChapterLedgerKey(manga, chapter)
+    local existing = ledger[key] or {}
+
+    local entry = {
+        manga_id = tostring(manga.id or existing.manga_id or ""),
+        manga_title = manga.title or existing.manga_title,
+        chapter_id = tostring(chapter.id or existing.chapter_id or ""),
+        chapter_name = chapter.name or existing.chapter_name,
+        read = existing.read == true,
+        path = existing.path,
+    }
+
+    for update_key, value in pairs(updates or {}) do
+        entry[update_key] = value
+    end
+
+    ledger[key] = entry
+    self:saveChapterLedger(ledger)
+    return entry
+end
+
+function SuwayomiPlugin:getChapterLedgerKey(manga, chapter)
+    return self:getChapterDownloadKey(manga, chapter)
+end
+
+function SuwayomiPlugin:mergeChaptersWithReadLedger(manga, chapters)
+    local ledger = self:loadChapterLedger()
+    local changed = false
+    local merged = {}
+
+    for _, chapter in ipairs(chapters or {}) do
+        local item = {}
+        for key, value in pairs(chapter) do
+            item[key] = value
+        end
+
+        local key = self:getChapterLedgerKey(manga, item)
+        local entry = ledger[key]
+        local is_read = item.is_read == true or (entry and entry.read == true)
+        item.is_read = is_read
+
+        if is_read then
+            ledger[key] = {
+                manga_id = tostring(manga.id or ""),
+                manga_title = manga.title,
+                chapter_id = tostring(item.id or ""),
+                chapter_name = item.name,
+                read = true,
+                path = entry and entry.path or nil,
+            }
+            changed = true
+        end
+
+        table.insert(merged, item)
+    end
+
+    if changed then
+        self:saveChapterLedger(ledger)
+    end
+
+    return merged
+end
+
 function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
     local SuwayomiDownloader = require("suwayomi_downloader")
     local download_directory = SuwayomiSettings:loadDownloadDirectory()
@@ -270,11 +349,18 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
             item[key] = value
         end
 
-        item.menu_text = self:formatChapterMenuText(item, self:getChapterDownloadStatus(manga, item))
+        local status = self:getChapterDownloadStatus(manga, item)
+        if not status and item.is_read then
+            status = { state = "read" }
+        end
+        item.menu_text = self:formatChapterMenuText(item, status)
         if download_directory and download_directory ~= "" then
             local _, chapter_path = SuwayomiDownloader:getTargetPath(download_directory, manga, item)
-            if not self:getChapterDownloadStatus(manga, item) and SuwayomiDownloader:chapterExists(chapter_path) then
+            if not status and SuwayomiDownloader:chapterExists(chapter_path) then
                 item.menu_text = item.name .. " [downloaded]"
+            end
+            if SuwayomiDownloader:chapterExists(chapter_path) then
+                self:upsertChapterLedgerEntry(manga, item, { path = chapter_path })
             end
         end
 
@@ -282,6 +368,68 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
     end
 
     return items
+end
+
+function SuwayomiPlugin:getCurrentDocumentPath()
+    if not self.ui then
+        return nil
+    end
+
+    local document = self.ui.document
+    return self.ui.document_path
+        or self.ui.document_pathname
+        or (document and (document.file or document.filename or document.path))
+end
+
+function SuwayomiPlugin:isCurrentDocumentFinished()
+    local doc_settings = self.ui and self.ui.doc_settings
+    if not doc_settings or not doc_settings.readSetting then
+        return false
+    end
+
+    local summary = doc_settings:readSetting("summary")
+    local status = summary and summary.status
+    return status == "finished" or status == "complete" or status == "completed"
+end
+
+function SuwayomiPlugin:markLedgerEntryRead(entry)
+    if not entry or entry.read == true then
+        return false
+    end
+
+    local ledger = self:loadChapterLedger()
+    local key = tostring(entry.manga_id or "") .. ":" .. tostring(entry.chapter_id or "")
+    if not ledger[key] then
+        return false
+    end
+
+    ledger[key].read = true
+    self:saveChapterLedger(ledger)
+
+    local credentials = SuwayomiSettings:load()
+    if credentials.server_url ~= "" and SuwayomiAPI.markChapterRead then
+        local result = SuwayomiAPI.markChapterRead(credentials, entry.chapter_id)
+        if not result.ok then
+            self:showMessage(_(result.error))
+        end
+    end
+
+    return true
+end
+
+function SuwayomiPlugin:onCloseDocument()
+    local document_path = self:getCurrentDocumentPath()
+    if not document_path or not self:isCurrentDocumentFinished() then
+        return
+    end
+
+    local ledger = self:loadChapterLedger()
+    for _, entry in pairs(ledger) do
+        if entry.path == document_path then
+            self:markLedgerEntryRead(entry)
+            return
+        end
+    end
 end
 
 function SuwayomiPlugin:refreshChapterMenu()

@@ -262,6 +262,15 @@ describe("suwayomi_api", function()
         assert.truthy(query:match('"equalTo":17'))
         assert.truthy(query:match('"first":200'))
         assert.truthy(query:match("chapters"))
+        assert.truthy(query:match("isRead"))
+    end)
+
+    it("builds the mark chapter read mutation", function()
+        local query = api._buildMarkChapterReadMutation("398")
+
+        assert.truthy(query:match("mutation UPDATE_CHAPTER_READ"))
+        assert.truthy(query:match('"id":398'))
+        assert.truthy(query:match('"isRead":true'))
     end)
 
     it("parses chapters from a manga response body", function()
@@ -283,10 +292,10 @@ describe("suwayomi_api", function()
         local chapters = api.parseChapterResponse(response)
 
         assert.are.same({
-            { id = "1", name = "Chapter 1" },
-            { id = "2", name = "Chapter 7" },
-            { id = "3", name = "Chapter 8" },
-            { id = "4", name = "4" },
+            { id = "1", name = "Chapter 1", is_read = false },
+            { id = "2", name = "Chapter 7", is_read = false },
+            { id = "3", name = "Chapter 8", is_read = false },
+            { id = "4", name = "4", is_read = false },
         }, chapters)
     end)
 
@@ -697,8 +706,8 @@ describe("suwayomi_api", function()
                 "data": {
                     "chapters": {
                         "nodes": [
-                            { "id": 1, "name": "Chapter 1" },
-                            { "id": 2, "name": "", "chapterNumber": 7 },
+                            { "id": 1, "name": "Chapter 1", "isRead": true },
+                            { "id": 2, "name": "", "chapterNumber": 7, "isRead": false },
                             { "id": 3, "chapterNumber": 8 }
                         ]
                     }
@@ -709,9 +718,9 @@ describe("suwayomi_api", function()
         local chapters = api.parseStoredChapterResponse(response)
 
         assert.are.same({
-            { id = "1", name = "Chapter 1" },
-            { id = "2", name = "Chapter 7" },
-            { id = "3", name = "Chapter 8" },
+            { id = "1", name = "Chapter 1", is_read = true },
+            { id = "2", name = "Chapter 7", is_read = false },
+            { id = "3", name = "Chapter 8", is_read = false },
         }, chapters)
     end)
 
@@ -738,7 +747,7 @@ describe("suwayomi_api", function()
                 sink = {
                     table = function(target)
                         return function(_chunk)
-                            table.insert(target, [[{"data":{"chapters":{"totalCount":1,"nodes":[{"id":1,"name":"Chapter 1"}]}}}]])
+                            table.insert(target, [[{"data":{"chapters":{"totalCount":1,"nodes":[{"id":1,"name":"Chapter 1","isRead":true}]}}}]])
                         end
                     end,
                 },
@@ -755,7 +764,49 @@ describe("suwayomi_api", function()
         assert.is_true(result.ok)
         assert.truthy(requested_body:match("GET_CHAPTERS_MANGA"))
         assert.truthy(requested_body:match('"equalTo":17'))
-        assert.are.same({ { id = "1", name = "Chapter 1" } }, result.chapters)
+        assert.are.same({ { id = "1", name = "Chapter 1", is_read = true } }, result.chapters)
+    end)
+
+    it("marks a chapter read through Suwayomi", function()
+        local requested_body
+
+        package.preload["ssl.https"] = function()
+            return {
+                request = function(options)
+                    requested_body = options.source
+                    options.sink("ignored")
+                    return 1, 200
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value)
+                        return value
+                    end,
+                },
+                sink = {
+                    table = function(target)
+                        return function(_chunk)
+                            table.insert(target, [[{"data":{"updateChapter":{"chapter":{"id":398,"isRead":true}}}}]])
+                        end
+                    end,
+                },
+            }
+        end
+
+        local result = api.markChapterRead({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        }, "398")
+
+        assert.is_true(result.ok)
+        assert.truthy(requested_body:match("UPDATE_CHAPTER_READ"))
+        assert.truthy(requested_body:match('"isRead":true'))
     end)
 
     it("fetches chapters for a manga and parses the response", function()
@@ -798,7 +849,7 @@ describe("suwayomi_api", function()
         assert.is_true(result.ok)
         assert.truthy(requested_body:match("GET_MANGA_CHAPTERS_FETCH"))
         assert.truthy(requested_body:match('"mangaId":"m1"'))
-        assert.are.same({ { id = "1", name = "Chapter 1" } }, result.chapters)
+        assert.are.same({ { id = "1", name = "Chapter 1", is_read = false } }, result.chapters)
     end)
 
     it("prefers stored chapters before falling back to fetch", function()
@@ -845,7 +896,7 @@ describe("suwayomi_api", function()
         assert.is_true(result.ok)
         assert.are.equal(1, #requests)
         assert.truthy(requests[1]:match("GET_CHAPTERS_MANGA"))
-        assert.are.same({ { id = "1", name = "Chapter 1" } }, result.chapters)
+        assert.are.same({ { id = "1", name = "Chapter 1", is_read = false } }, result.chapters)
     end)
 
     it("falls back to fetch when stored chapters are empty", function()
@@ -893,7 +944,7 @@ describe("suwayomi_api", function()
         assert.are.equal(2, #requests)
         assert.truthy(requests[1]:match("GET_CHAPTERS_MANGA"))
         assert.truthy(requests[2]:match("GET_MANGA_CHAPTERS_FETCH"))
-        assert.are.same({ { id = "1", name = "Fetched Chapter" } }, result.chapters)
+        assert.are.same({ { id = "1", name = "Fetched Chapter", is_read = false } }, result.chapters)
     end)
 
     it("returns a missing URL error when chapter fetch credentials omit server_url", function()

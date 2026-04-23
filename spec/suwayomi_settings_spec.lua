@@ -133,4 +133,26 @@ describe("suwayomi_settings", function()
         assert.is_true(flushed)
         assert.are.same(jobs, stored_data.download_queue)
     end)
+
+    it("loads an empty chapter ledger by default", function()
+        local settings = require("suwayomi_settings")
+
+        assert.are.same({}, settings:loadChapterLedger())
+    end)
+
+    it("saves the chapter ledger and flushes the settings file", function()
+        local ledger = {
+            ["m1:398"] = {
+                manga_id = "m1",
+                chapter_id = "398",
+                read = true,
+            },
+        }
+
+        local settings = require("suwayomi_settings")
+        settings:saveChapterLedger(ledger)
+
+        assert.is_true(flushed)
+        assert.are.same(ledger, stored_data.chapter_ledger)
+    end)
 end)

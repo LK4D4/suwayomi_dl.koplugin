@@ -117,6 +117,9 @@ function DownloadQueue:formatChapterMenuText(chapter, status)
     if status.state == "downloaded" or status.state == "skipped" then
         return chapter.name .. " [downloaded]"
     end
+    if status.state == "read" then
+        return chapter.name .. " [read]"
+    end
     if status.state == "failed" then
         return chapter.name .. " [failed]"
     end

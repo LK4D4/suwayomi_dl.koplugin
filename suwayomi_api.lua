@@ -175,7 +175,7 @@ end
 
 function SuwayomiAPI._buildChapterQuery(manga_id)
     return json.encode({
-        query = "mutation GET_MANGA_CHAPTERS_FETCH($input: FetchChaptersInput!) { fetchChapters(input: $input) { chapters { id name chapterNumber sourceOrder scanlator } } }",
+        query = "mutation GET_MANGA_CHAPTERS_FETCH($input: FetchChaptersInput!) { fetchChapters(input: $input) { chapters { id name chapterNumber sourceOrder scanlator isRead } } }",
         variables = {
             input = {
                 mangaId = tonumber(manga_id) or manga_id,
@@ -197,7 +197,7 @@ end
 
 function SuwayomiAPI._buildStoredChapterQuery(manga_id)
     return json.encode({
-        query = "query GET_CHAPTERS_MANGA($filter: ChapterFilterInput, $first: Int, $order: [ChapterOrderInput!]) { chapters(filter: $filter, first: $first, order: $order) { totalCount nodes { id name chapterNumber sourceOrder scanlator } } }",
+        query = "query GET_CHAPTERS_MANGA($filter: ChapterFilterInput, $first: Int, $order: [ChapterOrderInput!]) { chapters(filter: $filter, first: $first, order: $order) { totalCount nodes { id name chapterNumber sourceOrder scanlator isRead } } }",
         variables = {
             filter = {
                 mangaId = {
@@ -208,6 +208,20 @@ function SuwayomiAPI._buildStoredChapterQuery(manga_id)
             order = {
                 {
                     by = "SOURCE_ORDER",
+                },
+            },
+        },
+    })
+end
+
+function SuwayomiAPI._buildMarkChapterReadMutation(chapter_id)
+    return json.encode({
+        query = "mutation UPDATE_CHAPTER_READ($input: UpdateChapterInput!) { updateChapter(input: $input) { chapter { id isRead } } }",
+        variables = {
+            input = {
+                id = tonumber(chapter_id) or chapter_id,
+                patch = {
+                    isRead = true,
                 },
             },
         },
@@ -240,6 +254,7 @@ function SuwayomiAPI.parseChapterResponse(response_body)
         table.insert(chapters, {
             id = tostring(entry.id),
             name = chapter_name,
+            is_read = entry.isRead == true,
         })
     end
 
@@ -386,10 +401,33 @@ function SuwayomiAPI.parseStoredChapterResponse(response_body)
         table.insert(chapters, {
             id = tostring(entry.id),
             name = chapter_name,
+            is_read = entry.isRead == true,
         })
     end
 
     return chapters
+end
+
+function SuwayomiAPI.parseMarkChapterReadResponse(response_body)
+    local payload, _, err = json.decode(response_body, 1, nil)
+    if err then
+        return nil, "Invalid response from Suwayomi server."
+    end
+
+    local chapter = payload
+        and payload.data
+        and payload.data.updateChapter
+        and payload.data.updateChapter.chapter
+
+    if type(chapter) ~= "table" then
+        local graph_error = payload and payload.errors and payload.errors[1] and payload.errors[1].message
+        return nil, graph_error or "Suwayomi server did not update chapter read state."
+    end
+
+    return {
+        id = tostring(chapter.id),
+        is_read = chapter.isRead == true,
+    }
 end
 
 performGraphQLRequest = function(credentials, request_body, operation_name)
@@ -522,6 +560,27 @@ function SuwayomiAPI.queryChaptersForManga(credentials, manga_id)
     return {
         ok = true,
         chapters = chapters,
+    }
+end
+
+function SuwayomiAPI.markChapterRead(credentials, chapter_id)
+    local result = performGraphQLRequest(credentials, SuwayomiAPI._buildMarkChapterReadMutation(chapter_id), "markChapterRead")
+    if not result.ok then
+        return result
+    end
+
+    local chapter, parse_error = SuwayomiAPI.parseMarkChapterReadResponse(result.response_body)
+    if not chapter then
+        logDebugEvent({ operation = "markChapterRead", event = "parse_error", error = parse_error })
+        return {
+            ok = false,
+            error = parse_error,
+        }
+    end
+
+    return {
+        ok = true,
+        chapter = chapter,
     }
 end
 
