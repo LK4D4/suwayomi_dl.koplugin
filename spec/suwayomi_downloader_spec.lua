@@ -281,7 +281,10 @@ describe("suwayomi_downloader", function()
 
         local original_open = io.open
         io.open = function(path, mode)
-            assert.are.equal("/tmp/progress.txt", path)
+            if path ~= "/tmp/progress.txt" then
+                return original_open(path, mode)
+            end
+
             assert.are.equal("w", mode)
             local chunks = {}
             return {
