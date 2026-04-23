@@ -252,6 +252,35 @@ describe("suwayomi_download_queue", function()
         assert.are.equal("network timeout", context.messages[#context.messages])
     end)
 
+    it("retries failed downloads when enqueued again", function()
+        local manga = { id = "m1", title = "Sousou no Frieren" }
+        local chapter = { id = "398", name = "Official_Vol. 1 Ch. 1" }
+        local context = build_queue({
+            saved_queue = {
+                {
+                    key = "m1:398",
+                    state = "failed",
+                    download_directory = "/books",
+                    manga = manga,
+                    chapter = chapter,
+                },
+            },
+        })
+
+        context.queue:recover()
+        assert.are.equal("failed", context.queue:getStatus(manga, chapter).state)
+
+        assert.is_true(context.queue:enqueue(manga, chapter, "/books"))
+        assert.are.equal("queued", context.saved_queue()[1].state)
+
+        context.run_scheduled()
+
+        assert.are.same({}, context.saved_queue())
+        assert.are.equal(1, context.download_calls())
+        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz.part", removed_paths[1])
+        assert.are.equal("downloaded", context.queue:getStatus(manga, chapter).state)
+    end)
+
     it("requeues interrupted persistent downloads on recovery", function()
         local context = build_queue({
             saved_queue = {

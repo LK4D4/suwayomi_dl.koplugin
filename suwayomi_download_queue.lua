@@ -200,6 +200,13 @@ function DownloadQueue:enqueue(manga, chapter, download_directory)
         self.onMessage(_("Chapter download is already in progress."))
         return false
     end
+    if status and status.state == "failed" then
+        self:cleanupInterruptedDownload({
+            download_directory = download_directory,
+            manga = manga,
+            chapter = chapter,
+        })
+    end
 
     local persistent_job = self:buildPersistentJob(manga, chapter, download_directory, "queued")
     self:upsertPersistentJob(persistent_job)
