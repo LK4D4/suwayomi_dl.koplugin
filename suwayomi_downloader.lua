@@ -52,6 +52,26 @@ function Downloader:failAndCleanup(message, chapter_path, writer)
     }
 end
 
+function Downloader:writeProgress(progress_path, state, current, total, path, error_message)
+    if not progress_path or progress_path == "" then
+        return
+    end
+
+    local handle = io.open(progress_path, "w")
+    if not handle then
+        return
+    end
+
+    handle:write("state=", tostring(state or ""), "\n")
+    handle:write("current=", tostring(current or 0), "\n")
+    handle:write("total=", tostring(total or 0), "\n")
+    handle:write("path=", tostring(path or ""), "\n")
+    if error_message then
+        handle:write("error=", tostring(error_message), "\n")
+    end
+    handle:close()
+end
+
 function Downloader:startChapterDownload(credentials, download_directory, manga, chapter)
     if not download_directory or download_directory == "" then
         return { ok = false, error = "Set up a download directory first." }
@@ -156,6 +176,39 @@ function Downloader:downloadChapter(credentials, download_directory, manga, chap
         if not result.ok then
             return result
         end
+    until result.done
+
+    return { ok = true, path = start_result.path }
+end
+
+function Downloader:downloadChapterWithProgress(credentials, download_directory, manga, chapter, progress_path)
+    local start_result = self:startChapterDownload(credentials, download_directory, manga, chapter)
+    if not start_result.ok or start_result.skipped then
+        self:writeProgress(
+            progress_path,
+            start_result.skipped and "skipped" or (start_result.ok and "downloaded" or "failed"),
+            start_result.ok and 1 or 0,
+            start_result.ok and 1 or 0,
+            start_result.path,
+            start_result.error
+        )
+        return start_result
+    end
+
+    local result
+    repeat
+        result = self:downloadNextPage(start_result.job)
+        if not result.ok then
+            self:writeProgress(progress_path, "failed", 0, start_result.total, start_result.path, result.error)
+            return result
+        end
+        self:writeProgress(
+            progress_path,
+            result.done and "downloaded" or "downloading",
+            result.current,
+            result.total,
+            result.path
+        )
     until result.done
 
     return { ok = true, path = start_result.path }

@@ -12,6 +12,8 @@ describe("suwayomi plugin", function()
     local trapper_wrapped
     local trapper_subprocess_calls
     local scheduled_callbacks
+    local original_io_open
+    local progress_files
 
     local function reset_plugin_environment()
         registered_actions = {}
@@ -25,6 +27,47 @@ describe("suwayomi plugin", function()
         trapper_wrapped = 0
         trapper_subprocess_calls = {}
         scheduled_callbacks = {}
+        progress_files = {}
+        original_io_open = original_io_open or io.open
+        io.open = function(path, mode)
+            if tostring(path):match("%.suwayomi_dl_progress_") then
+                if mode == "w" then
+                    local chunks = {}
+                    return {
+                        write = function(_, ...)
+                            for _, value in ipairs({...}) do
+                                table.insert(chunks, value)
+                            end
+                        end,
+                        close = function()
+                            progress_files[path] = table.concat(chunks)
+                        end,
+                    }
+                end
+
+                local content = progress_files[path]
+                if not content then
+                    return nil
+                end
+                local lines = {}
+                for line in content:gmatch("([^\n]*)\n?") do
+                    if line ~= "" then
+                        table.insert(lines, line)
+                    end
+                end
+                local index = 0
+                return {
+                    lines = function()
+                        return function()
+                            index = index + 1
+                            return lines[index]
+                        end
+                    end,
+                    close = function() end,
+                }
+            end
+            return original_io_open(path, mode)
+        end
 
         package.loaded.main = nil
         package.loaded.dispatcher = nil
@@ -65,6 +108,13 @@ describe("suwayomi plugin", function()
                         result = result:gsub("%%" .. index, tostring(value))
                     end
                     return result
+                end,
+                runInSubProcess = function(callback)
+                    callback()
+                    return 1234
+                end,
+                isSubProcessDone = function()
+                    return true
                 end,
             }
         end
@@ -210,6 +260,9 @@ describe("suwayomi plugin", function()
         package.preload.suwayomi_downloader = nil
         package.preload.suwayomi_ui = nil
         package.preload.suwayomi_settings = nil
+        if original_io_open then
+            io.open = original_io_open
+        end
     end)
 
     it("registers a dispatcher action and main-menu entry on init", function()
@@ -503,7 +556,7 @@ describe("suwayomi plugin", function()
         assert.are.equal("Official_Vol. 1 Ch. 1 [queued]", shown_chapter_menu.chapters[1].menu_text)
         run_scheduled_callbacks()
 
-        assert.is_true(menu_updates >= 3)
+        assert.is_true(menu_updates >= 2)
         assert.are.equal("Official_Vol. 1 Ch. 1 [downloaded]", shown_chapter_menu.chapters[1].menu_text)
         assert.are.equal("Saved Official_Vol. 1 Ch. 1.cbz in /books/Sousou no Frieren", shown_messages[#shown_messages])
     end)

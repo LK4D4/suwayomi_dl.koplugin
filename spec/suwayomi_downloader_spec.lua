@@ -222,6 +222,90 @@ describe("suwayomi_downloader", function()
         }, added_files)
     end)
 
+    it("writes progress updates while downloading a chapter", function()
+        local progress_updates = {}
+
+        package.preload.suwayomi_api = function()
+            return {
+                fetchChapterPages = function()
+                    return {
+                        ok = true,
+                        pages = {
+                            "/page/0",
+                            "/page/1",
+                        },
+                    }
+                end,
+                downloadBinary = function(_, page_url)
+                    return {
+                        ok = true,
+                        body = page_url == "/page/0" and "page-one" or "page-two",
+                        content_type = "image/jpeg",
+                    }
+                end,
+            }
+        end
+        package.preload.lfs = function()
+            return {
+                attributes = function()
+                    return nil
+                end,
+                mkdir = function()
+                    return true
+                end,
+            }
+        end
+        package.preload["ffi/archiver"] = function()
+            return {
+                Writer = {
+                    new = function()
+                        return {
+                            open = function() return true end,
+                            addFileFromMemory = function() return true end,
+                            close = function() end,
+                        }
+                    end,
+                },
+            }
+        end
+        package.preload["ffi/util"] = function()
+            return {
+                joinPath = function(base, segment)
+                    if base:sub(-1) == "/" then
+                        return base .. segment
+                    end
+                    return base .. "/" .. segment
+                end,
+            }
+        end
+
+        local original_open = io.open
+        io.open = function(path, mode)
+            assert.are.equal("/tmp/progress.txt", path)
+            assert.are.equal("w", mode)
+            local chunks = {}
+            return {
+                write = function(_, ...)
+                    for _, value in ipairs({...}) do
+                        table.insert(chunks, value)
+                    end
+                end,
+                close = function()
+                    table.insert(progress_updates, table.concat(chunks))
+                end,
+            }
+        end
+
+        local downloader = require("suwayomi_downloader")
+        local result = downloader:downloadChapterWithProgress({}, "/books", { title = "Sousou no Frieren" }, { id = "398", name = "Official_Vol. 1 Ch. 1" }, "/tmp/progress.txt")
+
+        io.open = original_open
+
+        assert.is_true(result.ok)
+        assert.are.equal("state=downloading\ncurrent=1\ntotal=2\npath=/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz\n", progress_updates[1])
+        assert.are.equal("state=downloaded\ncurrent=2\ntotal=2\npath=/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz\n", progress_updates[#progress_updates])
+    end)
+
     it("removes a partial cbz when a page download fails", function()
         local removed_path
 

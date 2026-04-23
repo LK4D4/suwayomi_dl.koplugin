@@ -207,6 +207,11 @@ function SuwayomiPlugin:getChapterDownloadKey(manga, chapter)
     return tostring(manga.id or manga.title or "") .. ":" .. tostring(chapter.id or chapter.name or "")
 end
 
+function SuwayomiPlugin:getChapterProgressPath(manga, chapter, download_directory)
+    local key = self:getChapterDownloadKey(manga, chapter):gsub("[^%w%-_%.]", "_")
+    return (download_directory or ""):gsub("/+$", "") .. "/.suwayomi_dl_progress_" .. key .. ".txt"
+end
+
 function SuwayomiPlugin:getChapterDownloadStatus(manga, chapter)
     self.chapter_download_status = self.chapter_download_status or {}
     return self.chapter_download_status[self:getChapterDownloadKey(manga, chapter)]
@@ -234,6 +239,10 @@ function SuwayomiPlugin:formatChapterMenuText(chapter, status)
     end
 
     if status.state == "downloaded" then
+        return chapter.name .. " [downloaded]"
+    end
+
+    if status.state == "skipped" then
         return chapter.name .. " [downloaded]"
     end
 
@@ -289,6 +298,31 @@ function SuwayomiPlugin:refreshChapterMenu()
     elseif self.current_chapter_menu and self.current_chapter_menu.updateItems then
         self.current_chapter_menu:updateItems(nil, true)
     end
+end
+
+function SuwayomiPlugin:readChapterProgress(progress_path)
+    local handle = io.open(progress_path, "r")
+    if not handle then
+        return nil
+    end
+
+    local status = {}
+    for line in handle:lines() do
+        local key, value = line:match("^([^=]+)=(.*)$")
+        if key then
+            status[key] = value
+        end
+    end
+    handle:close()
+
+    if status.current then
+        status.current = tonumber(status.current)
+    end
+    if status.total then
+        status.total = tonumber(status.total)
+    end
+
+    return status
 end
 
 function SuwayomiPlugin:formatDownloadMessage(result)
@@ -353,16 +387,70 @@ function SuwayomiPlugin:processChapterDownloadQueue()
     end
 
     self.chapter_download_active = queued
-    local start_result = queued.downloader:startChapterDownload(queued.credentials, queued.download_directory, queued.manga, queued.chapter)
-    if not start_result.ok or start_result.skipped then
-        self.chapter_download_active = false
-        if start_result.ok then
-            self:setChapterDownloadStatus(queued.manga, queued.chapter, { state = "downloaded" })
-            self:showMessage(self:formatDownloadMessage(start_result))
-        else
-            self:setChapterDownloadStatus(queued.manga, queued.chapter, { state = "failed" })
-            self:showMessage(_(start_result.error))
+    queued.progress_path = self:getChapterProgressPath(queued.manga, queued.chapter, queued.download_directory)
+    os.remove(queued.progress_path)
+
+    local FFIUtil = require("ffi/util")
+    local pid, err = FFIUtil.runInSubProcess(function()
+        local function writeProgress(state, current, total, path, error_message)
+            if queued.downloader.writeProgress then
+                queued.downloader:writeProgress(queued.progress_path, state, current, total, path, error_message)
+                return
+            end
+
+            local handle = io.open(queued.progress_path, "w")
+            if not handle then
+                return
+            end
+            handle:write("state=", tostring(state or ""), "\n")
+            handle:write("current=", tostring(current or 0), "\n")
+            handle:write("total=", tostring(total or 0), "\n")
+            handle:write("path=", tostring(path or ""), "\n")
+            if error_message then
+                handle:write("error=", tostring(error_message), "\n")
+            end
+            handle:close()
         end
+
+        if queued.downloader.downloadChapterWithProgress then
+            queued.downloader:downloadChapterWithProgress(
+                queued.credentials,
+                queued.download_directory,
+                queued.manga,
+                queued.chapter,
+                queued.progress_path
+            )
+            return
+        end
+
+        local result = queued.downloader:startChapterDownload(queued.credentials, queued.download_directory, queued.manga, queued.chapter)
+        if not result.ok or result.skipped then
+            writeProgress(
+                result.skipped and "skipped" or (result.ok and "downloaded" or "failed"),
+                result.ok and 1 or 0,
+                result.ok and 1 or 0,
+                result.path,
+                result.error
+            )
+            return
+        end
+
+        repeat
+            result = queued.downloader:downloadNextPage(result.job)
+            writeProgress(
+                result.ok and (result.done and "downloaded" or "downloading") or "failed",
+                result.current,
+                result.total,
+                result.path,
+                result.error
+            )
+        until not result.ok or result.done
+    end)
+
+    if not pid then
+        self.chapter_download_active = false
+        self:setChapterDownloadStatus(queued.manga, queued.chapter, { state = "failed" })
+        self:showMessage(T(_("Could not start chapter download: %1"), err or _("unknown error")))
         self:refreshChapterMenu()
         UIManager:scheduleIn(0, function()
             self:processChapterDownloadQueue()
@@ -370,55 +458,62 @@ function SuwayomiPlugin:processChapterDownloadQueue()
         return
     end
 
-    queued.step_job = start_result.job
-    queued.path = start_result.path
+    queued.pid = pid
     self:setChapterDownloadStatus(queued.manga, queued.chapter, {
         state = "downloading",
         current = 0,
-        total = start_result.total,
+        total = 0,
     })
     self:refreshChapterMenu()
-    UIManager:scheduleIn(0, function()
-        self:processChapterDownloadStep()
+    UIManager:scheduleIn(0.5, function()
+        self:pollChapterDownload()
     end)
 end
 
-function SuwayomiPlugin:processChapterDownloadStep()
+function SuwayomiPlugin:pollChapterDownload()
     local active = self.chapter_download_active
     if not active then
         return
     end
 
-    local result = active.downloader:downloadNextPage(active.step_job)
-    if not result.ok then
-        self:setChapterDownloadStatus(active.manga, active.chapter, { state = "failed" })
-        self.chapter_download_active = false
+    local progress = self:readChapterProgress(active.progress_path)
+    if progress and progress.state then
+        self:setChapterDownloadStatus(active.manga, active.chapter, {
+            state = progress.state,
+            current = progress.current,
+            total = progress.total,
+        })
         self:refreshChapterMenu()
-        self:showMessage(_(result.error))
-        UIManager:scheduleIn(0, function()
-            self:processChapterDownloadQueue()
-        end)
-        return
     end
 
-    self:setChapterDownloadStatus(active.manga, active.chapter, {
-        state = result.done and "downloaded" or "downloading",
-        current = result.current,
-        total = result.total,
-    })
-    self:refreshChapterMenu()
+    local FFIUtil = require("ffi/util")
+    local done = FFIUtil.isSubProcessDone(active.pid)
+    local terminal = progress and (progress.state == "downloaded" or progress.state == "skipped" or progress.state == "failed")
 
-    if result.done then
+    if terminal or done then
         self.chapter_download_active = false
-        self:showMessage(self:formatDownloadMessage(result))
+        os.remove(active.progress_path)
+        if progress and (progress.state == "downloaded" or progress.state == "skipped") then
+            self:showMessage(self:formatDownloadMessage({
+                ok = true,
+                skipped = progress.state == "skipped",
+                path = progress.path,
+            }))
+        elseif progress and progress.state == "failed" then
+            self:showMessage(_(progress.error or _("Chapter download failed.")))
+        else
+            self:setChapterDownloadStatus(active.manga, active.chapter, { state = "failed" })
+            self:refreshChapterMenu()
+            self:showMessage(_("Chapter download failed."))
+        end
         UIManager:scheduleIn(0, function()
             self:processChapterDownloadQueue()
         end)
         return
     end
 
-    UIManager:scheduleIn(0, function()
-        self:processChapterDownloadStep()
+    UIManager:scheduleIn(0.5, function()
+        self:pollChapterDownload()
     end)
 end
 
