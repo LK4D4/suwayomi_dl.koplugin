@@ -223,7 +223,7 @@ describe("suwayomi_downloader", function()
     end)
 
     it("writes progress updates while downloading a chapter", function()
-        local progress_updates = {}
+        local progress_path = os.tmpname()
 
         package.preload.suwayomi_api = function()
             return {
@@ -279,34 +279,16 @@ describe("suwayomi_downloader", function()
             }
         end
 
-        local original_open = io.open
-        io.open = function(path, mode)
-            if path ~= "/tmp/progress.txt" then
-                return original_open(path, mode)
-            end
-
-            assert.are.equal("w", mode)
-            local chunks = {}
-            return {
-                write = function(_, ...)
-                    for _, value in ipairs({...}) do
-                        table.insert(chunks, value)
-                    end
-                end,
-                close = function()
-                    table.insert(progress_updates, table.concat(chunks))
-                end,
-            }
-        end
-
         local downloader = require("suwayomi_downloader")
-        local result = downloader:downloadChapterWithProgress({}, "/books", { title = "Sousou no Frieren" }, { id = "398", name = "Official_Vol. 1 Ch. 1" }, "/tmp/progress.txt")
+        local result = downloader:downloadChapterWithProgress({}, "/books", { title = "Sousou no Frieren" }, { id = "398", name = "Official_Vol. 1 Ch. 1" }, progress_path)
 
-        io.open = original_open
+        local progress_file = assert(io.open(progress_path, "r"))
+        local progress_content = progress_file:read("*a")
+        progress_file:close()
+        os.remove(progress_path)
 
         assert.is_true(result.ok)
-        assert.are.equal("state=downloading\ncurrent=1\ntotal=2\npath=/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz\n", progress_updates[1])
-        assert.are.equal("state=downloaded\ncurrent=2\ntotal=2\npath=/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz\n", progress_updates[#progress_updates])
+        assert.are.equal("state=downloaded\ncurrent=2\ntotal=2\npath=/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz\n", progress_content)
     end)
 
     it("removes a partial cbz when a page download fails", function()

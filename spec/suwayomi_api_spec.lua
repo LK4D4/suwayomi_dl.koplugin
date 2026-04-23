@@ -148,7 +148,11 @@ describe("suwayomi_api", function()
         local logs = {}
         local original_io_open = io.open
 
-        io.open = function()
+        io.open = function(path, mode)
+            if path ~= "/storage/emulated/0/koreader/settings/suwayomi_debug.log" then
+                return original_io_open(path, mode)
+            end
+
             return {
                 write = function(_, message)
                     table.insert(logs, message)
@@ -359,7 +363,11 @@ describe("suwayomi_api", function()
         local logs = {}
         local original_io_open = io.open
 
-        io.open = function()
+        io.open = function(path, mode)
+            if path ~= "/storage/emulated/0/koreader/settings/suwayomi_debug.log" then
+                return original_io_open(path, mode)
+            end
+
             return {
                 write = function(_, message)
                     table.insert(logs, message)
@@ -899,7 +907,11 @@ describe("suwayomi_api", function()
         local logs = {}
         local original_io_open = io.open
 
-        io.open = function()
+        io.open = function(path, mode)
+            if path ~= "/storage/emulated/0/koreader/settings/suwayomi_debug.log" then
+                return original_io_open(path, mode)
+            end
+
             return {
                 write = function(_, message)
                     table.insert(logs, message)
@@ -1043,7 +1055,11 @@ describe("suwayomi_api", function()
         local logs = {}
         local original_io_open = io.open
 
-        io.open = function()
+        io.open = function(path, mode)
+            if path ~= "/storage/emulated/0/koreader/settings/suwayomi_debug.log" then
+                return original_io_open(path, mode)
+            end
+
             return {
                 write = function(_, message)
                     table.insert(logs, message)
