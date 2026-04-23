@@ -87,4 +87,18 @@ function SuwayomiSettings:saveDownloadDirectory(path)
     return normalized
 end
 
+function SuwayomiSettings:loadDownloadQueue()
+    return self:open():readSetting("download_queue", {})
+end
+
+function SuwayomiSettings:saveDownloadQueue(jobs)
+    local normalized = {}
+    for _, job in ipairs(jobs or {}) do
+        table.insert(normalized, job)
+    end
+
+    self:open():saveSetting("download_queue", normalized):flush()
+    return normalized
+end
+
 return SuwayomiSettings

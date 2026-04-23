@@ -36,6 +36,7 @@ function SuwayomiPlugin:init()
     self.chapter_download_status = {}
     self.chapter_download_queue = {}
     self.chapter_download_active = false
+    self:recoverPersistentDownloadQueue()
     self.ui.menu:registerToMainMenu(self)
 end
 
@@ -212,6 +213,121 @@ function SuwayomiPlugin:getChapterProgressPath(manga, chapter, download_director
     return (download_directory or ""):gsub("/+$", "") .. "/.suwayomi_dl_progress_" .. key .. ".txt"
 end
 
+function SuwayomiPlugin:loadPersistentDownloadQueue()
+    if not SuwayomiSettings.loadDownloadQueue then
+        return {}
+    end
+
+    return SuwayomiSettings:loadDownloadQueue() or {}
+end
+
+function SuwayomiPlugin:savePersistentDownloadQueue(jobs)
+    if not SuwayomiSettings.saveDownloadQueue then
+        return jobs or {}
+    end
+
+    return SuwayomiSettings:saveDownloadQueue(jobs or {})
+end
+
+function SuwayomiPlugin:buildPersistentDownloadJob(manga, chapter, download_directory, state)
+    return {
+        key = self:getChapterDownloadKey(manga, chapter),
+        state = state or "queued",
+        download_directory = download_directory,
+        manga = {
+            id = manga.id,
+            title = manga.title,
+        },
+        chapter = {
+            id = chapter.id,
+            name = chapter.name,
+        },
+    }
+end
+
+function SuwayomiPlugin:upsertPersistentDownloadJob(job)
+    local jobs = self:loadPersistentDownloadQueue()
+    local replaced = false
+    for index, existing in ipairs(jobs) do
+        if existing.key == job.key then
+            jobs[index] = job
+            replaced = true
+            break
+        end
+    end
+
+    if not replaced then
+        table.insert(jobs, job)
+    end
+
+    self:savePersistentDownloadQueue(jobs)
+end
+
+function SuwayomiPlugin:removePersistentDownloadJob(key)
+    local jobs = self:loadPersistentDownloadQueue()
+    local remaining = {}
+    for _, job in ipairs(jobs) do
+        if job.key ~= key then
+            table.insert(remaining, job)
+        end
+    end
+
+    self:savePersistentDownloadQueue(remaining)
+end
+
+function SuwayomiPlugin:cleanupInterruptedDownload(job)
+    if not job or not job.download_directory or not job.manga or not job.chapter then
+        return
+    end
+
+    local SuwayomiDownloader = require("suwayomi_downloader")
+    local _, chapter_path = SuwayomiDownloader:getTargetPath(job.download_directory, job.manga, job.chapter)
+    local partial_path = SuwayomiDownloader.getPartialPath and SuwayomiDownloader:getPartialPath(chapter_path)
+        or (chapter_path .. ".part")
+    os.remove(partial_path)
+end
+
+function SuwayomiPlugin:recoverPersistentDownloadQueue()
+    local jobs = self:loadPersistentDownloadQueue()
+    if #jobs == 0 then
+        return
+    end
+
+    local recovered_jobs = {}
+    local should_process = false
+    local SuwayomiDownloader = require("suwayomi_downloader")
+
+    for _, job in ipairs(jobs) do
+        if job.manga and job.chapter and job.download_directory and (job.state == "queued" or job.state == "downloading") then
+            if job.state == "downloading" then
+                self:cleanupInterruptedDownload(job)
+            end
+
+            local recovered = self:buildPersistentDownloadJob(job.manga, job.chapter, job.download_directory, "queued")
+            table.insert(recovered_jobs, recovered)
+            table.insert(self.chapter_download_queue, {
+                key = recovered.key,
+                download_directory = recovered.download_directory,
+                manga = recovered.manga,
+                chapter = recovered.chapter,
+                downloader = SuwayomiDownloader,
+            })
+            self:setChapterDownloadStatus(recovered.manga, recovered.chapter, { state = "queued" })
+            should_process = true
+        elseif job.manga and job.chapter and job.state == "failed" then
+            table.insert(recovered_jobs, job)
+            self:setChapterDownloadStatus(job.manga, job.chapter, { state = "failed" })
+        end
+    end
+
+    self:savePersistentDownloadQueue(recovered_jobs)
+    if should_process then
+        UIManager:scheduleIn(0, function()
+            self:processChapterDownloadQueue()
+        end)
+    end
+end
+
 function SuwayomiPlugin:getChapterDownloadStatus(manga, chapter)
     self.chapter_download_status = self.chapter_download_status or {}
     return self.chapter_download_status[self:getChapterDownloadKey(manga, chapter)]
@@ -342,7 +458,6 @@ end
 
 function SuwayomiPlugin:enqueueChapterDownload(manga, chapter)
     local SuwayomiDownloader = require("suwayomi_downloader")
-    local credentials = SuwayomiSettings:load()
     local download_directory = SuwayomiSettings:loadDownloadDirectory()
     self.chapter_download_queue = self.chapter_download_queue or {}
     if not download_directory or download_directory == "" then
@@ -362,9 +477,11 @@ function SuwayomiPlugin:enqueueChapterDownload(manga, chapter)
         return
     end
 
+    local persistent_job = self:buildPersistentDownloadJob(manga, chapter, download_directory, "queued")
+    self:upsertPersistentDownloadJob(persistent_job)
     self:setChapterDownloadStatus(manga, chapter, { state = "queued" })
     table.insert(self.chapter_download_queue, {
-        credentials = credentials,
+        key = persistent_job.key,
         download_directory = download_directory,
         manga = manga,
         chapter = chapter,
@@ -389,6 +506,10 @@ function SuwayomiPlugin:processChapterDownloadQueue()
     self.chapter_download_active = queued
     queued.progress_path = self:getChapterProgressPath(queued.manga, queued.chapter, queued.download_directory)
     os.remove(queued.progress_path)
+    queued.credentials = queued.credentials or SuwayomiSettings:load()
+    self:upsertPersistentDownloadJob(
+        self:buildPersistentDownloadJob(queued.manga, queued.chapter, queued.download_directory, "downloading")
+    )
 
     local FFIUtil = require("ffi/util")
     local pid, err = FFIUtil.runInSubProcess(function()
@@ -450,6 +571,9 @@ function SuwayomiPlugin:processChapterDownloadQueue()
     if not pid then
         self.chapter_download_active = false
         self:setChapterDownloadStatus(queued.manga, queued.chapter, { state = "failed" })
+        self:upsertPersistentDownloadJob(
+            self:buildPersistentDownloadJob(queued.manga, queued.chapter, queued.download_directory, "failed")
+        )
         self:showMessage(T(_("Could not start chapter download: %1"), err or _("unknown error")))
         self:refreshChapterMenu()
         UIManager:scheduleIn(0, function()
@@ -494,11 +618,18 @@ function SuwayomiPlugin:pollChapterDownload()
         self.chapter_download_active = false
         os.remove(active.progress_path)
         if progress and (progress.state == "downloaded" or progress.state == "skipped") then
+            self:removePersistentDownloadJob(active.key or self:getChapterDownloadKey(active.manga, active.chapter))
             -- The chapter row now carries the success state; avoid an extra popup.
         elseif progress and progress.state == "failed" then
+            self:upsertPersistentDownloadJob(
+                self:buildPersistentDownloadJob(active.manga, active.chapter, active.download_directory, "failed")
+            )
             self:showMessage(_(progress.error or _("Chapter download failed.")))
         else
             self:setChapterDownloadStatus(active.manga, active.chapter, { state = "failed" })
+            self:upsertPersistentDownloadJob(
+                self:buildPersistentDownloadJob(active.manga, active.chapter, active.download_directory, "failed")
+            )
             self:refreshChapterMenu()
             self:showMessage(_("Chapter download failed."))
         end

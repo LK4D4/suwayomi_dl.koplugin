@@ -109,4 +109,28 @@ describe("suwayomi_settings", function()
         assert.is_true(flushed)
         assert.are.equal("/storage/emulated/0/Books/Manga", stored_data.download_directory)
     end)
+
+    it("loads an empty download queue by default", function()
+        local settings = require("suwayomi_settings")
+
+        assert.are.same({}, settings:loadDownloadQueue())
+    end)
+
+    it("saves download queue jobs and flushes the settings file", function()
+        local jobs = {
+            {
+                key = "m1:398",
+                state = "queued",
+                download_directory = "/books",
+                manga = { id = "m1", title = "Sousou no Frieren" },
+                chapter = { id = "398", name = "Official_Vol. 1 Ch. 1" },
+            },
+        }
+
+        local settings = require("suwayomi_settings")
+        settings:saveDownloadQueue(jobs)
+
+        assert.is_true(flushed)
+        assert.are.same(jobs, stored_data.download_queue)
+    end)
 end)
