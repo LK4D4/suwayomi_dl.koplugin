@@ -213,6 +213,18 @@ describe("suwayomi_download_queue", function()
         ).state)
     end)
 
+    it("keeps read indication visible alongside download state", function()
+        local context = build_queue()
+
+        assert.are.equal(
+            "Official_Vol. 1 Ch. 1 [read] [downloaded]",
+            context.queue:formatChapterMenuText(
+                { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = true },
+                { state = "downloaded" }
+            )
+        )
+    end)
+
     it("does not enqueue a duplicate while a chapter is queued", function()
         local context = build_queue({ subprocess_done = false })
         local manga = { id = "m1", title = "Sousou no Frieren" }

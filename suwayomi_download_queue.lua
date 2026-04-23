@@ -102,28 +102,47 @@ function DownloadQueue:setStatus(manga, chapter, status)
 end
 
 function DownloadQueue:formatChapterMenuText(chapter, status)
+    local badges = {}
+    if chapter and chapter.is_read == true then
+        table.insert(badges, _("read"))
+    end
+
     if not status then
-        return chapter.name
+        if #badges == 0 then
+            return chapter.name
+        end
+        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
     end
     if status.state == "queued" then
-        return chapter.name .. " [queued]"
+        table.insert(badges, _("queued"))
+        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
     end
     if status.state == "downloading" then
         if status.total and status.total > 0 and status.current then
-            return T(_("%1 [downloading %2/%3]"), chapter.name, status.current, status.total)
+            table.insert(badges, T(_("downloading %1/%2"), status.current, status.total))
+            return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
         end
-        return chapter.name .. " [downloading]"
+        table.insert(badges, _("downloading"))
+        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
     end
     if status.state == "downloaded" or status.state == "skipped" then
-        return chapter.name .. " [downloaded]"
+        table.insert(badges, _("downloaded"))
+        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
     end
     if status.state == "read" then
-        return chapter.name .. " [read]"
+        if #badges == 0 then
+            table.insert(badges, _("read"))
+        end
+        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
     end
     if status.state == "failed" then
-        return chapter.name .. " [failed]"
+        table.insert(badges, _("failed"))
+        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
     end
-    return chapter.name
+    if #badges == 0 then
+        return chapter.name
+    end
+    return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
 end
 
 function DownloadQueue:readProgress(progress_path)
