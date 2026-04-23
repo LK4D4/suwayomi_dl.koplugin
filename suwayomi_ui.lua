@@ -1,4 +1,5 @@
 local Menu = require("ui/widget/menu")
+local ButtonDialog = require("ui/widget/buttondialog")
 local MultiInputDialog = require("ui/widget/multiinputdialog")
 local _ = require("gettext")
 
@@ -83,9 +84,10 @@ function SuwayomiUI.showChapterMenu(chapter_list, onSelectCallback)
 end
 
 function SuwayomiUI.showChapterActionsMenu(options, onSelectCallback)
-    local menu_table = {}
+    local buttons = {}
+    local row = {}
     for _, action in ipairs(options.actions or {}) do
-        table.insert(menu_table, {
+        table.insert(row, {
             text = action.text,
             callback = function()
                 if onSelectCallback then
@@ -93,15 +95,23 @@ function SuwayomiUI.showChapterActionsMenu(options, onSelectCallback)
                 end
             end,
         })
+        if #row == 2 then
+            table.insert(buttons, row)
+            row = {}
+        end
     end
 
-    local menu = Menu:new{
+    if #row > 0 then
+        table.insert(buttons, row)
+    end
+
+    local dialog = ButtonDialog:new{
         title = options.title or _("Chapter actions"),
-        item_table = menu_table,
+        buttons = buttons,
     }
     local UIManager = require("ui/uimanager")
-    UIManager:show(menu)
-    return menu
+    UIManager:show(dialog)
+    return dialog
 end
 
 function SuwayomiUI.updateChapterMenu(menu, options, onSelectCallback)

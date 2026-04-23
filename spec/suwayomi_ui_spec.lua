@@ -13,6 +13,7 @@ describe("suwayomi_ui", function()
         package.loaded.suwayomi_ui = nil
         package.loaded.gettext = nil
         package.loaded["ui/widget/menu"] = nil
+        package.loaded["ui/widget/buttondialog"] = nil
         package.loaded["ui/widget/multiinputdialog"] = nil
         package.loaded["ui/downloadmgr"] = nil
         package.loaded["ui/uimanager"] = nil
@@ -24,6 +25,14 @@ describe("suwayomi_ui", function()
         end
 
         package.preload["ui/widget/menu"] = function()
+            return {
+                new = function(_, options)
+                    return options
+                end,
+            }
+        end
+
+        package.preload["ui/widget/buttondialog"] = function()
             return {
                 new = function(_, options)
                     return options
@@ -75,6 +84,7 @@ describe("suwayomi_ui", function()
     after_each(function()
         package.preload.gettext = nil
         package.preload["ui/widget/menu"] = nil
+        package.preload["ui/widget/buttondialog"] = nil
         package.preload["ui/widget/multiinputdialog"] = nil
         package.preload["ui/downloadmgr"] = nil
         package.preload["ui/uimanager"] = nil
@@ -166,12 +176,12 @@ describe("suwayomi_ui", function()
         end)
 
         assert.are.equal("Chapter 1", shown_dialog.title)
-        assert.are.equal("Open", shown_dialog.item_table[1].text)
-        assert.are.equal("Delete from device", shown_dialog.item_table[2].text)
-        assert.are.equal("Mark as read", shown_dialog.item_table[3].text)
+        assert.are.equal("Open", shown_dialog.buttons[1][1].text)
+        assert.are.equal("Delete from device", shown_dialog.buttons[1][2].text)
+        assert.are.equal("Mark as read", shown_dialog.buttons[2][1].text)
 
-        shown_dialog.item_table[1].callback()
-        shown_dialog.item_table[3].callback()
+        shown_dialog.buttons[1][1].callback()
+        shown_dialog.buttons[2][1].callback()
 
         assert.are.same({
             { id = "open", text = "Open" },

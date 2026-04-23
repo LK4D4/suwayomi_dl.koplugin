@@ -905,6 +905,49 @@ describe("suwayomi plugin", function()
         assert.is_true(saved_ledger["m1:398"].read)
     end)
 
+    it("shows mark as unread for chapters already marked read", function()
+        local actions
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function()
+                    return false
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return {} end,
+                saveChapterLedger = function(_, ledger) return ledger end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        actions = plugin:getChapterActions(
+            { id = "m1", title = "Sousou no Frieren" },
+            { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = true }
+        )
+
+        assert.are.equal("Download", actions[1].text)
+        assert.are.equal("Mark as unread", actions[2].text)
+    end)
+
     it("keeps locally read chapters read even when Suwayomi reports unread", function()
         local shown_chapter_menu
         local saved_ledger = {

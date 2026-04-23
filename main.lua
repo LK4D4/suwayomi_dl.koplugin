@@ -460,7 +460,11 @@ function SuwayomiPlugin:getChapterActions(manga, chapter)
         table.insert(actions, { id = "download", text = _("Download") })
     end
 
-    table.insert(actions, { id = "mark_read", text = _("Mark as read") })
+    if chapter.is_read == true then
+        table.insert(actions, { id = "mark_unread", text = _("Mark as unread") })
+    else
+        table.insert(actions, { id = "mark_read", text = _("Mark as read") })
+    end
     return actions
 end
 
@@ -558,6 +562,37 @@ function SuwayomiPlugin:markChapterRead(manga, chapter)
     return true
 end
 
+function SuwayomiPlugin:markChapterUnread(manga, chapter)
+    local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
+    local ledger = self:loadChapterLedger()
+    local key = self:getChapterLedgerKey(manga, chapter)
+    local entry = ledger[key]
+
+    if entry then
+        entry.read = nil
+        entry.pending_read_sync = nil
+        entry.path = entry.path or chapter_path
+        if not entry.path then
+            ledger[key] = nil
+        else
+            ledger[key] = entry
+        end
+        self:saveChapterLedger(ledger)
+    end
+
+    if self.current_chapter_context and self.current_chapter_context.chapters then
+        for _, current in ipairs(self.current_chapter_context.chapters) do
+            if tostring(current.id or "") == tostring(chapter.id or "") then
+                current.is_read = false
+                break
+            end
+        end
+    end
+
+    self:refreshChapterMenu()
+    return true
+end
+
 function SuwayomiPlugin:performChapterAction(manga, chapter, action_id)
     if action_id == "open" then
         return self:openChapter(manga, chapter)
@@ -571,6 +606,9 @@ function SuwayomiPlugin:performChapterAction(manga, chapter, action_id)
     end
     if action_id == "mark_read" then
         return self:markChapterRead(manga, chapter)
+    end
+    if action_id == "mark_unread" then
+        return self:markChapterUnread(manga, chapter)
     end
     return false
 end
