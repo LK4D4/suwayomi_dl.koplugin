@@ -524,6 +524,181 @@ describe("suwayomi_downloader", function()
         assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz.part", removed_path)
     end)
 
+    it("rejects empty downloaded page bodies", function()
+        local removed_path
+
+        package.preload.suwayomi_api = function()
+            return {
+                fetchChapterPages = function()
+                    return {
+                        ok = true,
+                        pages = { "/page/0" },
+                    }
+                end,
+                downloadBinary = function()
+                    return { ok = true, body = "", content_type = "image/jpeg" }
+                end,
+            }
+        end
+        package.preload.lfs = function()
+            return {
+                attributes = function()
+                    return nil
+                end,
+                mkdir = function()
+                    return true
+                end,
+            }
+        end
+        package.preload["ffi/archiver"] = function()
+            return {
+                Writer = {
+                    new = function()
+                        return {
+                            open = function() return true end,
+                            addFileFromMemory = function()
+                                error("empty page should not be written")
+                            end,
+                            close = function() end,
+                        }
+                    end,
+                }
+            }
+        end
+        package.preload["ffi/util"] = function()
+            return {
+                joinPath = function(base, segment)
+                    if base:sub(-1) == "/" then
+                        return base .. segment
+                    end
+                    return base .. "/" .. segment
+                end,
+            }
+        end
+
+        local original_remove = os.remove
+        os.remove = function(path)
+            removed_path = path
+            return true
+        end
+
+        local downloader = require("suwayomi_downloader")
+        local result = downloader:downloadChapter({}, "/books", { title = "Sousou no Frieren" }, { id = "398", name = "Official_Vol. 1 Ch. 1" })
+
+        os.remove = original_remove
+
+        assert.is_false(result.ok)
+        assert.are.equal("Downloaded chapter page was empty.", result.error)
+        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz.part", removed_path)
+    end)
+
+    it("rejects non-image downloaded page content", function()
+        package.preload.suwayomi_api = function()
+            return {
+                fetchChapterPages = function()
+                    return {
+                        ok = true,
+                        pages = { "/page/0" },
+                    }
+                end,
+                downloadBinary = function()
+                    return { ok = true, body = "<html>nope</html>", content_type = "text/html" }
+                end,
+            }
+        end
+        package.preload.lfs = function()
+            return {
+                attributes = function()
+                    return nil
+                end,
+                mkdir = function()
+                    return true
+                end,
+            }
+        end
+        package.preload["ffi/archiver"] = function()
+            return {
+                Writer = {
+                    new = function()
+                        return {
+                            open = function() return true end,
+                            addFileFromMemory = function()
+                                error("non-image page should not be written")
+                            end,
+                            close = function() end,
+                        }
+                    end,
+                }
+            }
+        end
+        package.preload["ffi/util"] = function()
+            return {
+                joinPath = function(base, segment)
+                    if base:sub(-1) == "/" then
+                        return base .. segment
+                    end
+                    return base .. "/" .. segment
+                end,
+            }
+        end
+
+        local downloader = require("suwayomi_downloader")
+        local result = downloader:downloadChapter({}, "/books", { title = "Sousou no Frieren" }, { id = "398", name = "Official_Vol. 1 Ch. 1" })
+
+        assert.is_false(result.ok)
+        assert.are.equal("Downloaded chapter page was not an image.", result.error)
+    end)
+
+    it("does not finalize when fewer pages were written than expected", function()
+        local renamed = false
+        local writer = {
+            open = function() return true end,
+            addFileFromMemory = function() return true end,
+            close = function() end,
+        }
+
+        package.preload.suwayomi_api = function()
+            return {}
+        end
+        package.preload.lfs = function()
+            return {}
+        end
+        package.preload["ffi/archiver"] = function()
+            return {}
+        end
+        package.preload["ffi/util"] = function()
+            return {
+                joinPath = function(base, segment)
+                    if base:sub(-1) == "/" then
+                        return base .. segment
+                    end
+                    return base .. "/" .. segment
+                end,
+            }
+        end
+
+        local downloader = require("suwayomi_downloader")
+        local original_rename = os.rename
+        os.rename = function()
+            renamed = true
+            return true
+        end
+        local result = downloader:downloadNextPage({
+            credentials = {},
+            pages = { "/page/0", "/page/1" },
+            writer = writer,
+            chapter_path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+            partial_path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz.part",
+            current = 2,
+            written = 1,
+        })
+        os.rename = original_rename
+
+        assert.is_false(result.ok)
+        assert.is_false(renamed)
+        assert.are.equal("Chapter archive page count did not match Suwayomi page count.", result.error)
+    end)
+
     it("reports a manga directory creation failure before opening the archive", function()
         package.preload.suwayomi_api = function()
             return {

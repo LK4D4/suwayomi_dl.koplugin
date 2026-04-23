@@ -117,7 +117,58 @@ function Downloader:startChapterDownload(credentials, download_directory, manga,
             chapter_path = chapter_path,
             partial_path = partial_path,
             current = 0,
+            written = 0,
         },
+    }
+end
+
+function Downloader:validatePage(binary)
+    if not binary.body or #binary.body == 0 then
+        return false, "Downloaded chapter page was empty."
+    end
+
+    local content_type = tostring(binary.content_type or ""):lower()
+    if not content_type:match("^image/") then
+        return false, "Downloaded chapter page was not an image."
+    end
+
+    return true
+end
+
+function Downloader:finalizeChapterArchive(job)
+    local written = job.written
+    if written == nil then
+        written = job.current
+    end
+
+    if written ~= #job.pages then
+        self:cleanupPartialFile(job.partial_path)
+        return {
+            ok = false,
+            error = "Chapter archive page count did not match Suwayomi page count.",
+            current = job.current,
+            total = #job.pages,
+            path = job.chapter_path,
+        }
+    end
+
+    if not os.rename(job.partial_path, job.chapter_path) then
+        self:cleanupPartialFile(job.partial_path)
+        return {
+            ok = false,
+            error = "Could not finalize chapter archive.",
+            current = job.current,
+            total = #job.pages,
+            path = job.chapter_path,
+        }
+    end
+
+    return {
+        ok = true,
+        done = true,
+        current = job.current,
+        total = #job.pages,
+        path = job.chapter_path,
     }
 end
 
@@ -131,29 +182,17 @@ function Downloader:downloadNextPage(job)
             job.writer:close()
             job.writer = nil
         end
-        if not os.rename(job.partial_path, job.chapter_path) then
-            self:cleanupPartialFile(job.partial_path)
-            return {
-                ok = false,
-                error = "Could not finalize chapter archive.",
-                current = job.current,
-                total = #job.pages,
-                path = job.chapter_path,
-            }
-        end
-        return {
-            ok = true,
-            done = true,
-            current = job.current,
-            total = #job.pages,
-            path = job.chapter_path,
-        }
+        return self:finalizeChapterArchive(job)
     end
 
     local next_index = job.current + 1
     local binary = SuwayomiAPI.downloadBinary(job.credentials, job.pages[next_index])
     if not binary.ok then
         return self:failAndCleanup(binary.error, job.partial_path, job.writer)
+    end
+    local valid_page, validation_error = self:validatePage(binary)
+    if not valid_page then
+        return self:failAndCleanup(validation_error, job.partial_path, job.writer)
     end
 
     local ext = binary.content_type == "image/webp" and "webp"
@@ -166,20 +205,12 @@ function Downloader:downloadNextPage(job)
     end
 
     job.current = next_index
+    job.written = (job.written or 0) + 1
     local done = job.current == #job.pages
     if done then
         job.writer:close()
         job.writer = nil
-        if not os.rename(job.partial_path, job.chapter_path) then
-            self:cleanupPartialFile(job.partial_path)
-            return {
-                ok = false,
-                error = "Could not finalize chapter archive.",
-                current = job.current,
-                total = #job.pages,
-                path = job.chapter_path,
-            }
-        end
+        return self:finalizeChapterArchive(job)
     end
 
     return {
