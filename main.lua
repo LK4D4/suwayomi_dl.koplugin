@@ -338,6 +338,41 @@ function SuwayomiPlugin:mergeChaptersWithReadLedger(manga, chapters)
     return merged
 end
 
+function SuwayomiPlugin:getKoreaderMetadataPathForDocument(document_path)
+    if not document_path or document_path == "" then
+        return nil
+    end
+
+    local base_path, extension = document_path:match("^(.*)%.([^%.%/]+)$")
+    if not base_path or not extension then
+        return nil
+    end
+
+    return base_path .. ".sdr/metadata." .. extension .. ".lua"
+end
+
+function SuwayomiPlugin:isKoreaderMetadataFinished(metadata_path)
+    local handle = metadata_path and io.open(metadata_path, "r")
+    if not handle then
+        return false
+    end
+
+    local content = handle:read("*a") or ""
+    handle:close()
+
+    local status = content:match('%["status"%]%s*=%s*"([^"]+)"')
+    if status == "complete" or status == "completed" or status == "finished" then
+        return true
+    end
+
+    local percent_finished = tonumber(content:match('%["percent_finished"%]%s*=%s*([%d%.]+)'))
+    return percent_finished ~= nil and percent_finished >= 1
+end
+
+function SuwayomiPlugin:isChapterPathFinishedInKoreader(chapter_path)
+    return self:isKoreaderMetadataFinished(self:getKoreaderMetadataPathForDocument(chapter_path))
+end
+
 function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
     local SuwayomiDownloader = require("suwayomi_downloader")
     local download_directory = SuwayomiSettings:loadDownloadDirectory()
@@ -349,19 +384,28 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
             item[key] = value
         end
 
+        local chapter_exists = false
+        local chapter_path
+        if download_directory and download_directory ~= "" then
+            _, chapter_path = SuwayomiDownloader:getTargetPath(download_directory, manga, item)
+            chapter_exists = SuwayomiDownloader:chapterExists(chapter_path)
+            if chapter_exists and self:isChapterPathFinishedInKoreader(chapter_path) then
+                item.is_read = true
+            end
+        end
+
         local status = self:getChapterDownloadStatus(manga, item)
-        if not status and item.is_read then
-            status = { state = "read" }
+        if not status then
+            if chapter_exists then
+                status = { state = "downloaded" }
+            elseif item.is_read then
+                status = { state = "read" }
+            end
         end
         item.menu_text = self:formatChapterMenuText(item, status)
-        if download_directory and download_directory ~= "" then
-            local _, chapter_path = SuwayomiDownloader:getTargetPath(download_directory, manga, item)
-            if not status and SuwayomiDownloader:chapterExists(chapter_path) then
-                item.menu_text = item.name .. " [downloaded]"
-            end
-            if SuwayomiDownloader:chapterExists(chapter_path) then
-                self:upsertChapterLedgerEntry(manga, item, { path = chapter_path })
-            end
+
+        if chapter_exists then
+            self:upsertChapterLedgerEntry(manga, item, { path = chapter_path, read = item.is_read == true })
         end
 
         table.insert(items, item)
