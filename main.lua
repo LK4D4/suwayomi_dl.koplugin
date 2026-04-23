@@ -2,8 +2,8 @@ local Dispatcher = require("dispatcher") -- luacheck:ignore
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local InfoMessage = require("ui/widget/infomessage")
-local Trapper = require("ui/trapper")
 local SuwayomiAPI = require("suwayomi_api")
+local SuwayomiDownloadQueue = require("suwayomi_download_queue")
 local SuwayomiSettings = require("suwayomi_settings")
 local SuwayomiUI = require("suwayomi_ui")
 local _ = require("gettext")
@@ -22,6 +22,31 @@ local SuwayomiPlugin = WidgetContainer:extend{
     is_doc_only = false,
 }
 
+function SuwayomiPlugin:createDownloadQueue()
+    return SuwayomiDownloadQueue:new{
+        settings = SuwayomiSettings,
+        downloader = require("suwayomi_downloader"),
+        ui_manager = UIManager,
+        ffi_util = require("ffi/util"),
+        getCredentials = function()
+            return SuwayomiSettings:load()
+        end,
+        onStatusChanged = function()
+            self:refreshChapterMenu()
+        end,
+        onMessage = function(message)
+            self:showMessage(message)
+        end,
+    }
+end
+
+function SuwayomiPlugin:getDownloadQueue()
+    if not self.download_queue then
+        self.download_queue = self:createDownloadQueue()
+    end
+    return self.download_queue
+end
+
 function SuwayomiPlugin:onDispatcherRegisterActions()
     Dispatcher:registerAction("suwayomi_action", {
         category = "none",
@@ -33,10 +58,7 @@ end
 
 function SuwayomiPlugin:init()
     self:onDispatcherRegisterActions()
-    self.chapter_download_status = {}
-    self.chapter_download_queue = {}
-    self.chapter_download_active = false
-    self:recoverPersistentDownloadQueue()
+    self:getDownloadQueue():recover()
     self.ui.menu:registerToMainMenu(self)
 end
 
@@ -89,48 +111,61 @@ end
 
 function SuwayomiPlugin:showSourceLanguageDialog()
     local selected = self:buildSourceLanguageSet(SuwayomiSettings:loadSourceLanguages())
+    local language_menu
 
-    SuwayomiUI.showLanguageMenu({
-        languages = (function()
-            local languages = {}
-            for _, language in ipairs(SOURCE_LANGUAGE_OPTIONS) do
-                table.insert(languages, {
-                    code = language.code,
-                    label = language.label,
-                    enabled = selected[language.code] == true,
-                })
-            end
-            return languages
-        end)(),
-        onToggle = function(code, enabled)
-            if enabled then
-                selected[code] = true
-            else
-                selected[code] = nil
-            end
+    local function buildLanguages()
+        local languages = {}
+        for _, language in ipairs(SOURCE_LANGUAGE_OPTIONS) do
+            table.insert(languages, {
+                code = language.code,
+                label = language.label,
+                enabled = selected[language.code] == true,
+            })
+        end
+        return languages
+    end
 
-            local saved_languages = {}
-            for _, language in ipairs(SOURCE_LANGUAGE_OPTIONS) do
-                if selected[language.code] then
-                    table.insert(saved_languages, language.code)
-                end
+    local function saveSelectedLanguages()
+        local saved_languages = {}
+        for _, language in ipairs(SOURCE_LANGUAGE_OPTIONS) do
+            if selected[language.code] then
+                table.insert(saved_languages, language.code)
             end
+        end
+        SuwayomiSettings:saveSourceLanguages(saved_languages)
+    end
 
-            SuwayomiSettings:saveSourceLanguages(saved_languages)
-            self:showSourceLanguageDialog()
-        end,
-        onClose = function()
-            local saved_languages = SuwayomiSettings:loadSourceLanguages()
-            local labels = {}
-            local selected_lookup = self:buildSourceLanguageSet(saved_languages)
-            for _, language in ipairs(SOURCE_LANGUAGE_OPTIONS) do
-                if selected_lookup[language.code] then
-                    table.insert(labels, language.label)
-                end
+    local function showSavedSummary()
+        local labels = {}
+        for _, language in ipairs(SOURCE_LANGUAGE_OPTIONS) do
+            if selected[language.code] then
+                table.insert(labels, language.label)
             end
-            local summary = #labels > 0 and table.concat(labels, ", ") or _("none")
-            self:showMessage(T(_("Suwayomi source languages saved: %1"), summary))
-        end,
+        end
+        local summary = #labels > 0 and table.concat(labels, ", ") or _("none")
+        self:showMessage(T(_("Suwayomi source languages saved: %1"), summary))
+    end
+
+    local function onToggle(code, enabled)
+        if enabled then
+            selected[code] = true
+        else
+            selected[code] = nil
+        end
+
+        saveSelectedLanguages()
+        if SuwayomiUI.updateLanguageMenu then
+            SuwayomiUI.updateLanguageMenu(language_menu, {
+                languages = buildLanguages(),
+                onClose = showSavedSummary,
+            }, onToggle)
+        end
+    end
+
+    language_menu = SuwayomiUI.showLanguageMenu({
+        languages = buildLanguages(),
+        onToggle = onToggle,
+        onClose = showSavedSummary,
     })
 end
 
@@ -205,168 +240,23 @@ function SuwayomiPlugin:showChaptersForManga(manga)
 end
 
 function SuwayomiPlugin:getChapterDownloadKey(manga, chapter)
-    return tostring(manga.id or manga.title or "") .. ":" .. tostring(chapter.id or chapter.name or "")
+    return self:getDownloadQueue():getKey(manga, chapter)
 end
 
 function SuwayomiPlugin:getChapterProgressPath(manga, chapter, download_directory)
-    local key = self:getChapterDownloadKey(manga, chapter):gsub("[^%w%-_%.]", "_")
-    return (download_directory or ""):gsub("/+$", "") .. "/.suwayomi_dl_progress_" .. key .. ".txt"
-end
-
-function SuwayomiPlugin:loadPersistentDownloadQueue()
-    if not SuwayomiSettings.loadDownloadQueue then
-        return {}
-    end
-
-    return SuwayomiSettings:loadDownloadQueue() or {}
-end
-
-function SuwayomiPlugin:savePersistentDownloadQueue(jobs)
-    if not SuwayomiSettings.saveDownloadQueue then
-        return jobs or {}
-    end
-
-    return SuwayomiSettings:saveDownloadQueue(jobs or {})
-end
-
-function SuwayomiPlugin:buildPersistentDownloadJob(manga, chapter, download_directory, state)
-    return {
-        key = self:getChapterDownloadKey(manga, chapter),
-        state = state or "queued",
-        download_directory = download_directory,
-        manga = {
-            id = manga.id,
-            title = manga.title,
-        },
-        chapter = {
-            id = chapter.id,
-            name = chapter.name,
-        },
-    }
-end
-
-function SuwayomiPlugin:upsertPersistentDownloadJob(job)
-    local jobs = self:loadPersistentDownloadQueue()
-    local replaced = false
-    for index, existing in ipairs(jobs) do
-        if existing.key == job.key then
-            jobs[index] = job
-            replaced = true
-            break
-        end
-    end
-
-    if not replaced then
-        table.insert(jobs, job)
-    end
-
-    self:savePersistentDownloadQueue(jobs)
-end
-
-function SuwayomiPlugin:removePersistentDownloadJob(key)
-    local jobs = self:loadPersistentDownloadQueue()
-    local remaining = {}
-    for _, job in ipairs(jobs) do
-        if job.key ~= key then
-            table.insert(remaining, job)
-        end
-    end
-
-    self:savePersistentDownloadQueue(remaining)
-end
-
-function SuwayomiPlugin:cleanupInterruptedDownload(job)
-    if not job or not job.download_directory or not job.manga or not job.chapter then
-        return
-    end
-
-    local SuwayomiDownloader = require("suwayomi_downloader")
-    local _, chapter_path = SuwayomiDownloader:getTargetPath(job.download_directory, job.manga, job.chapter)
-    local partial_path = SuwayomiDownloader.getPartialPath and SuwayomiDownloader:getPartialPath(chapter_path)
-        or (chapter_path .. ".part")
-    os.remove(partial_path)
-end
-
-function SuwayomiPlugin:recoverPersistentDownloadQueue()
-    local jobs = self:loadPersistentDownloadQueue()
-    if #jobs == 0 then
-        return
-    end
-
-    local recovered_jobs = {}
-    local should_process = false
-    local SuwayomiDownloader = require("suwayomi_downloader")
-
-    for _, job in ipairs(jobs) do
-        if job.manga and job.chapter and job.download_directory and (job.state == "queued" or job.state == "downloading") then
-            if job.state == "downloading" then
-                self:cleanupInterruptedDownload(job)
-            end
-
-            local recovered = self:buildPersistentDownloadJob(job.manga, job.chapter, job.download_directory, "queued")
-            table.insert(recovered_jobs, recovered)
-            table.insert(self.chapter_download_queue, {
-                key = recovered.key,
-                download_directory = recovered.download_directory,
-                manga = recovered.manga,
-                chapter = recovered.chapter,
-                downloader = SuwayomiDownloader,
-            })
-            self:setChapterDownloadStatus(recovered.manga, recovered.chapter, { state = "queued" })
-            should_process = true
-        elseif job.manga and job.chapter and job.state == "failed" then
-            table.insert(recovered_jobs, job)
-            self:setChapterDownloadStatus(job.manga, job.chapter, { state = "failed" })
-        end
-    end
-
-    self:savePersistentDownloadQueue(recovered_jobs)
-    if should_process then
-        UIManager:scheduleIn(0, function()
-            self:processChapterDownloadQueue()
-        end)
-    end
+    return self:getDownloadQueue():buildProgressPath(manga, chapter, download_directory)
 end
 
 function SuwayomiPlugin:getChapterDownloadStatus(manga, chapter)
-    self.chapter_download_status = self.chapter_download_status or {}
-    return self.chapter_download_status[self:getChapterDownloadKey(manga, chapter)]
+    return self:getDownloadQueue():getStatus(manga, chapter)
 end
 
 function SuwayomiPlugin:setChapterDownloadStatus(manga, chapter, status)
-    self.chapter_download_status = self.chapter_download_status or {}
-    self.chapter_download_status[self:getChapterDownloadKey(manga, chapter)] = status
+    self:getDownloadQueue():setStatus(manga, chapter, status)
 end
 
 function SuwayomiPlugin:formatChapterMenuText(chapter, status)
-    if not status then
-        return chapter.name
-    end
-
-    if status.state == "queued" then
-        return chapter.name .. " [queued]"
-    end
-
-    if status.state == "downloading" then
-        if status.total and status.total > 0 and status.current then
-            return T(_("%1 [downloading %2/%3]"), chapter.name, status.current, status.total)
-        end
-        return chapter.name .. " [downloading]"
-    end
-
-    if status.state == "downloaded" then
-        return chapter.name .. " [downloaded]"
-    end
-
-    if status.state == "skipped" then
-        return chapter.name .. " [downloaded]"
-    end
-
-    if status.state == "failed" then
-        return chapter.name .. " [failed]"
-    end
-
-    return chapter.name
+    return self:getDownloadQueue():formatChapterMenuText(chapter, status)
 end
 
 function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
@@ -416,50 +306,8 @@ function SuwayomiPlugin:refreshChapterMenu()
     end
 end
 
-function SuwayomiPlugin:readChapterProgress(progress_path)
-    local handle = io.open(progress_path, "r")
-    if not handle then
-        return nil
-    end
-
-    local status = {}
-    for line in handle:lines() do
-        local key, value = line:match("^([^=]+)=(.*)$")
-        if key then
-            status[key] = value
-        end
-    end
-    handle:close()
-
-    if status.current then
-        status.current = tonumber(status.current)
-    end
-    if status.total then
-        status.total = tonumber(status.total)
-    end
-
-    return status
-end
-
-function SuwayomiPlugin:formatDownloadMessage(result)
-    local filename = result.path and result.path:match("([^/]+)$") or nil
-    local directory = result.path and result.path:match("^(.*)/[^/]+$") or nil
-
-    if result.skipped then
-        return T(_("Already downloaded: %1"), filename or _("chapter"))
-    end
-
-    if filename and directory then
-        return T(_("Saved %1 in %2"), filename, directory)
-    end
-
-    return T(_("Downloaded chapter to %1"), result.path or "")
-end
-
 function SuwayomiPlugin:enqueueChapterDownload(manga, chapter)
-    local SuwayomiDownloader = require("suwayomi_downloader")
     local download_directory = SuwayomiSettings:loadDownloadDirectory()
-    self.chapter_download_queue = self.chapter_download_queue or {}
     if not download_directory or download_directory == "" then
         SuwayomiUI.showDirectoryChooser(function(path)
             local saved_path = SuwayomiSettings:saveDownloadDirectory(path)
@@ -471,177 +319,16 @@ function SuwayomiPlugin:enqueueChapterDownload(manga, chapter)
         return
     end
 
-    local status = self:getChapterDownloadStatus(manga, chapter)
-    if status and (status.state == "queued" or status.state == "downloading") then
-        self:showMessage(_("Chapter download is already in progress."))
-        return
-    end
-
-    local persistent_job = self:buildPersistentDownloadJob(manga, chapter, download_directory, "queued")
-    self:upsertPersistentDownloadJob(persistent_job)
-    self:setChapterDownloadStatus(manga, chapter, { state = "queued" })
-    table.insert(self.chapter_download_queue, {
-        key = persistent_job.key,
-        download_directory = download_directory,
-        manga = manga,
-        chapter = chapter,
-        downloader = SuwayomiDownloader,
-    })
+    self:getDownloadQueue():enqueue(manga, chapter, download_directory)
     self:refreshChapterMenu()
-    UIManager:scheduleIn(0, function()
-        self:processChapterDownloadQueue()
-    end)
 end
 
 function SuwayomiPlugin:processChapterDownloadQueue()
-    if self.chapter_download_active then
-        return
-    end
-
-    local queued = table.remove(self.chapter_download_queue, 1)
-    if not queued then
-        return
-    end
-
-    self.chapter_download_active = queued
-    queued.progress_path = self:getChapterProgressPath(queued.manga, queued.chapter, queued.download_directory)
-    os.remove(queued.progress_path)
-    queued.credentials = queued.credentials or SuwayomiSettings:load()
-    self:upsertPersistentDownloadJob(
-        self:buildPersistentDownloadJob(queued.manga, queued.chapter, queued.download_directory, "downloading")
-    )
-
-    local FFIUtil = require("ffi/util")
-    local pid, err = FFIUtil.runInSubProcess(function()
-        local function writeProgress(state, current, total, path, error_message)
-            if queued.downloader.writeProgress then
-                queued.downloader:writeProgress(queued.progress_path, state, current, total, path, error_message)
-                return
-            end
-
-            local handle = io.open(queued.progress_path, "w")
-            if not handle then
-                return
-            end
-            handle:write("state=", tostring(state or ""), "\n")
-            handle:write("current=", tostring(current or 0), "\n")
-            handle:write("total=", tostring(total or 0), "\n")
-            handle:write("path=", tostring(path or ""), "\n")
-            if error_message then
-                handle:write("error=", tostring(error_message), "\n")
-            end
-            handle:close()
-        end
-
-        if queued.downloader.downloadChapterWithProgress then
-            queued.downloader:downloadChapterWithProgress(
-                queued.credentials,
-                queued.download_directory,
-                queued.manga,
-                queued.chapter,
-                queued.progress_path
-            )
-            return
-        end
-
-        local result = queued.downloader:startChapterDownload(queued.credentials, queued.download_directory, queued.manga, queued.chapter)
-        if not result.ok or result.skipped then
-            writeProgress(
-                result.skipped and "skipped" or (result.ok and "downloaded" or "failed"),
-                result.ok and 1 or 0,
-                result.ok and 1 or 0,
-                result.path,
-                result.error
-            )
-            return
-        end
-
-        repeat
-            result = queued.downloader:downloadNextPage(result.job)
-            writeProgress(
-                result.ok and (result.done and "downloaded" or "downloading") or "failed",
-                result.current,
-                result.total,
-                result.path,
-                result.error
-            )
-        until not result.ok or result.done
-    end)
-
-    if not pid then
-        self.chapter_download_active = false
-        self:setChapterDownloadStatus(queued.manga, queued.chapter, { state = "failed" })
-        self:upsertPersistentDownloadJob(
-            self:buildPersistentDownloadJob(queued.manga, queued.chapter, queued.download_directory, "failed")
-        )
-        self:showMessage(T(_("Could not start chapter download: %1"), err or _("unknown error")))
-        self:refreshChapterMenu()
-        UIManager:scheduleIn(0, function()
-            self:processChapterDownloadQueue()
-        end)
-        return
-    end
-
-    queued.pid = pid
-    self:setChapterDownloadStatus(queued.manga, queued.chapter, {
-        state = "downloading",
-        current = 0,
-        total = 0,
-    })
-    self:refreshChapterMenu()
-    UIManager:scheduleIn(0.5, function()
-        self:pollChapterDownload()
-    end)
+    self:getDownloadQueue():process()
 end
 
 function SuwayomiPlugin:pollChapterDownload()
-    local active = self.chapter_download_active
-    if not active then
-        return
-    end
-
-    local progress = self:readChapterProgress(active.progress_path)
-    if progress and progress.state then
-        self:setChapterDownloadStatus(active.manga, active.chapter, {
-            state = progress.state,
-            current = progress.current,
-            total = progress.total,
-        })
-        self:refreshChapterMenu()
-    end
-
-    local FFIUtil = require("ffi/util")
-    local done = FFIUtil.isSubProcessDone(active.pid)
-    local terminal = progress and (progress.state == "downloaded" or progress.state == "skipped" or progress.state == "failed")
-
-    if terminal or done then
-        self.chapter_download_active = false
-        os.remove(active.progress_path)
-        if progress and (progress.state == "downloaded" or progress.state == "skipped") then
-            self:removePersistentDownloadJob(active.key or self:getChapterDownloadKey(active.manga, active.chapter))
-            -- The chapter row now carries the success state; avoid an extra popup.
-        elseif progress and progress.state == "failed" then
-            self:upsertPersistentDownloadJob(
-                self:buildPersistentDownloadJob(active.manga, active.chapter, active.download_directory, "failed")
-            )
-            self:showMessage(_(progress.error or _("Chapter download failed.")))
-        else
-            self:setChapterDownloadStatus(active.manga, active.chapter, { state = "failed" })
-            self:upsertPersistentDownloadJob(
-                self:buildPersistentDownloadJob(active.manga, active.chapter, active.download_directory, "failed")
-            )
-            self:refreshChapterMenu()
-            self:showMessage(_("Chapter download failed."))
-        end
-        UIManager:scheduleIn(0, function()
-            self:processChapterDownloadQueue()
-        end)
-        return
-    end
-
-    UIManager:scheduleIn(0.5, function()
-        self:pollChapterDownload()
-    end)
+    self:getDownloadQueue():poll()
 end
 
 function SuwayomiPlugin:addToMainMenu(menu_items)

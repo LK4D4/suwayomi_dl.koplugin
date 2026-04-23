@@ -92,11 +92,13 @@ describe("suwayomi_api", function()
 
     it("fetches manga for a source and parses the response", function()
         local requested_body
+        local requested_timeout
 
         package.preload["ssl.https"] = function()
             return {
                 request = function(options)
                     requested_body = options.source
+                    requested_timeout = options.timeout
                     options.sink("ignored")
                     return 1, 200
                 end,
@@ -130,6 +132,7 @@ describe("suwayomi_api", function()
         assert.is_true(result.ok)
         assert.truthy(requested_body:match("GET_SOURCE_MANGAS_FETCH"))
         assert.truthy(requested_body:match('"source":"source%-1"'))
+        assert.are.equal(15, requested_timeout)
         assert.are.same({ { id = "1", title = "One Piece" } }, result.manga)
     end)
 
@@ -198,8 +201,7 @@ describe("suwayomi_api", function()
 
         assert.is_false(result.ok)
         assert.are.equal("Invalid response from Suwayomi server.", result.error)
-        assert.truthy(table.concat(logs, "\n"):match("fetchMangaForSource parse error:"))
-        assert.truthy(table.concat(logs, "\n"):match("fetchMangaForSource success body:"))
+        assert.are.same({}, logs)
     end)
 
     it("reports manga schema mismatches from the server", function()
@@ -411,17 +413,18 @@ describe("suwayomi_api", function()
 
         assert.is_false(result.ok)
         assert.are.equal("Invalid response from Suwayomi server.", result.error)
-        assert.truthy(table.concat(logs, "\n"):match("fetchChapterPages parse error:"))
-        assert.truthy(table.concat(logs, "\n"):match("fetchChapterPages success body:"))
+        assert.are.same({}, logs)
     end)
 
     it("downloads binary page bytes from a relative URL", function()
         local requested_url
+        local requested_timeout
 
         package.preload["ssl.https"] = function()
             return {
                 request = function(options)
                     requested_url = options.url
+                    requested_timeout = options.timeout
                     options.sink("ignored")
                     return 1, 200, {
                         ["content-type"] = "image/jpeg",
@@ -454,6 +457,7 @@ describe("suwayomi_api", function()
 
         assert.is_true(result.ok)
         assert.are.equal("https://suwayomi.example/api/v1/manga/85/chapter/1/page/0", requested_url)
+        assert.are.equal(15, requested_timeout)
         assert.are.equal("jpeg-bytes", result.body)
         assert.are.equal("image/jpeg", result.content_type)
     end)
@@ -957,8 +961,7 @@ describe("suwayomi_api", function()
 
         assert.is_false(result.ok)
         assert.are.equal("Invalid response from Suwayomi server.", result.error)
-        assert.truthy(table.concat(logs, "\n"):match("fetchChaptersForManga parse error:"))
-        assert.truthy(table.concat(logs, "\n"):match("fetchChaptersForManga success body:"))
+        assert.are.same({}, logs)
     end)
 
     it("reports chapter schema mismatches from the server", function()
@@ -1105,8 +1108,7 @@ describe("suwayomi_api", function()
 
         assert.is_false(result.ok)
         assert.are.equal("Invalid response from Suwayomi server.", result.error)
-        assert.truthy(table.concat(logs, "\n"):match("fetchSources parse error:"))
-        assert.truthy(table.concat(logs, "\n"):match("fetchSources success body:"))
+        assert.are.same({}, logs)
     end)
 
     it("reports source schema mismatches from the server", function()
@@ -1145,6 +1147,52 @@ describe("suwayomi_api", function()
 
         assert.is_false(result.ok)
         assert.are.equal("Suwayomi server did not return a sources list.", result.error)
+    end)
+
+    it("sends redacted metadata to an injected debug logger", function()
+        local events = {}
+        api.setDebugLogger(function(event)
+            table.insert(events, event)
+        end)
+
+        package.preload["ssl.https"] = function()
+            return {
+                request = function(options)
+                    options.sink("ignored")
+                    return 1, 500
+                end,
+            }
+        end
+
+        package.preload.ltn12 = function()
+            return {
+                source = {
+                    string = function(value)
+                        return value
+                    end,
+                },
+                sink = {
+                    table = function(target)
+                        return function()
+                            table.insert(target, [[{"errors":[{"message":"secret body"}]}]])
+                        end
+                    end,
+                },
+            }
+        end
+
+        local result = api.fetchSources({
+            server_url = "https://suwayomi.example",
+            username = "alice",
+            password = "secret",
+            auth_method = "basic_auth",
+        })
+
+        assert.is_false(result.ok)
+        assert.are.equal("response", events[1].event)
+        assert.are.equal("fetchSources", events[1].operation)
+        assert.are.equal(500, events[1].code)
+        assert.is_nil(events[1].response_body)
     end)
 
     it("uses socket.http for http servers", function()

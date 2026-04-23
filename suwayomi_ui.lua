@@ -93,16 +93,15 @@ function SuwayomiUI.updateChapterMenu(menu, options, onSelectCallback)
     end
 end
 
-function SuwayomiUI.showLanguageMenu(options)
-    local UIManager = require("ui/uimanager")
+function SuwayomiUI.buildLanguageMenuTable(options, onToggleCallback)
     local menu_table = {}
 
     for _, language in ipairs(options.languages or {}) do
         table.insert(menu_table, {
             text = string.format("%s %s", language.enabled and "[x]" or "[ ]", language.label),
             callback = function()
-                if options.onToggle then
-                    options.onToggle(language.code, not language.enabled)
+                if onToggleCallback then
+                    onToggleCallback(language.code, not language.enabled)
                 end
             end,
         })
@@ -117,11 +116,28 @@ function SuwayomiUI.showLanguageMenu(options)
         end,
     })
 
+    return menu_table
+end
+
+function SuwayomiUI.showLanguageMenu(options)
+    local UIManager = require("ui/uimanager")
     local menu = Menu:new{
         title = _("Suwayomi source languages"),
-        item_table = menu_table,
+        item_table = SuwayomiUI.buildLanguageMenuTable(options, options.onToggle),
     }
     UIManager:show(menu)
+    return menu
+end
+
+function SuwayomiUI.updateLanguageMenu(menu, options, onToggleCallback)
+    if not menu then
+        return
+    end
+
+    menu.item_table = SuwayomiUI.buildLanguageMenuTable(options, onToggleCallback or options.onToggle)
+    if menu.updateItems then
+        menu:updateItems(nil, true)
+    end
 end
 
 function SuwayomiUI.showLoginDialog(options)

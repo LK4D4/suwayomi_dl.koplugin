@@ -2,16 +2,18 @@ local SuwayomiAPI = {}
 local json = require("dkjson")
 
 local BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-local DEBUG_LOG_PATH = "/storage/emulated/0/koreader/settings/suwayomi_debug.log"
+local REQUEST_TIMEOUT_SECONDS = 15
 local performGraphQLRequest
+local debug_logger
 
-local function appendDebugLog(message)
-    local handle = io.open(DEBUG_LOG_PATH, "a")
-    if not handle then
-        return
+local function logDebugEvent(event)
+    if debug_logger then
+        pcall(debug_logger, event)
     end
-    handle:write(message, "\n")
-    handle:close()
+end
+
+function SuwayomiAPI.setDebugLogger(logger)
+    debug_logger = logger
 end
 
 local function base64Encode(input)
@@ -282,8 +284,7 @@ function SuwayomiAPI.fetchChapterPages(credentials, chapter_id)
 
     local parsed, parse_error = SuwayomiAPI.parseChapterPagesResponse(result.response_body)
     if not parsed then
-        appendDebugLog("fetchChapterPages parse error: " .. tostring(parse_error))
-        appendDebugLog("fetchChapterPages success body: " .. tostring(result.response_body))
+        logDebugEvent({ operation = "fetchChapterPages", event = "parse_error", error = parse_error })
         return {
             ok = false,
             error = parse_error,
@@ -321,6 +322,7 @@ function SuwayomiAPI.downloadBinary(credentials, page_url)
         method = "GET",
         headers = headers,
         sink = ltn12.sink.table(response_chunks),
+        timeout = REQUEST_TIMEOUT_SECONDS,
     }
 
     headers = headers or {}
@@ -418,13 +420,13 @@ performGraphQLRequest = function(credentials, request_body, operation_name)
         headers = headers,
         source = ltn12.source.string(request_body),
         sink = ltn12.sink.table(response_chunks),
+        timeout = REQUEST_TIMEOUT_SECONDS,
     }
 
-    appendDebugLog(string.format("%s url=%s ok=%s code=%s code_type=%s", operation_name, server_url, tostring(ok), tostring(code), type(code)))
+    logDebugEvent({ operation = operation_name, event = "response", ok = ok, code = code, code_type = type(code) })
 
     local response_body = table.concat(response_chunks)
     if code == 200 then
-        appendDebugLog(operation_name .. " received HTTP 200")
         return {
             ok = true,
             response_body = response_body,
@@ -432,7 +434,7 @@ performGraphQLRequest = function(credentials, request_body, operation_name)
     end
 
     if not ok then
-        appendDebugLog(operation_name .. " transport failure: " .. tostring(code))
+        logDebugEvent({ operation = operation_name, event = "transport_failure", error = code })
         return {
             ok = false,
             error = "Could not reach the Suwayomi server: " .. tostring(code),
@@ -440,7 +442,7 @@ performGraphQLRequest = function(credentials, request_body, operation_name)
     end
 
     if type(code) ~= "number" then
-        appendDebugLog(operation_name .. " non-numeric status: " .. tostring(code))
+        logDebugEvent({ operation = operation_name, event = "non_numeric_status", code = code })
         return {
             ok = false,
             error = "Could not reach the Suwayomi server: " .. tostring(code),
@@ -453,8 +455,7 @@ performGraphQLRequest = function(credentials, request_body, operation_name)
         [404] = "Suwayomi GraphQL endpoint not found.",
     }
 
-    appendDebugLog(operation_name .. " HTTP status: " .. tostring(code))
-    appendDebugLog(operation_name .. " response body: " .. tostring(response_body))
+    logDebugEvent({ operation = operation_name, event = "http_status", code = code })
     return {
         ok = false,
         error = error_message[code] or "Could not reach the Suwayomi server.",
@@ -469,8 +470,7 @@ function SuwayomiAPI.fetchSources(credentials)
 
     local sources, parse_error = SuwayomiAPI.parseSourcesResponse(result.response_body)
     if not sources then
-        appendDebugLog("fetchSources parse error: " .. tostring(parse_error))
-        appendDebugLog("fetchSources success body: " .. tostring(result.response_body))
+        logDebugEvent({ operation = "fetchSources", event = "parse_error", error = parse_error })
         return {
             ok = false,
             error = parse_error,
@@ -491,8 +491,7 @@ function SuwayomiAPI.fetchMangaForSource(credentials, source_id)
 
     local manga, parse_error = SuwayomiAPI.parseMangaResponse(result.response_body)
     if not manga then
-        appendDebugLog("fetchMangaForSource parse error: " .. tostring(parse_error))
-        appendDebugLog("fetchMangaForSource success body: " .. tostring(result.response_body))
+        logDebugEvent({ operation = "fetchMangaForSource", event = "parse_error", error = parse_error })
         return {
             ok = false,
             error = parse_error,
@@ -513,8 +512,7 @@ function SuwayomiAPI.queryChaptersForManga(credentials, manga_id)
 
     local chapters, parse_error = SuwayomiAPI.parseStoredChapterResponse(result.response_body)
     if not chapters then
-        appendDebugLog("queryChaptersForManga parse error: " .. tostring(parse_error))
-        appendDebugLog("queryChaptersForManga success body: " .. tostring(result.response_body))
+        logDebugEvent({ operation = "queryChaptersForManga", event = "parse_error", error = parse_error })
         return {
             ok = false,
             error = parse_error,
@@ -540,8 +538,7 @@ function SuwayomiAPI.fetchChaptersForManga(credentials, manga_id)
 
     local chapters, parse_error = SuwayomiAPI.parseChapterResponse(result.response_body)
     if not chapters then
-        appendDebugLog("fetchChaptersForManga parse error: " .. tostring(parse_error))
-        appendDebugLog("fetchChaptersForManga success body: " .. tostring(result.response_body))
+        logDebugEvent({ operation = "fetchChaptersForManga", event = "parse_error", error = parse_error })
         return {
             ok = false,
             error = parse_error,

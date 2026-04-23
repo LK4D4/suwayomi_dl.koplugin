@@ -78,6 +78,7 @@ describe("suwayomi plugin", function()
         package.loaded["ui/widget/infomessage"] = nil
         package.loaded["ui/widget/container/widgetcontainer"] = nil
         package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_download_queue = nil
         package.loaded.suwayomi_downloader = nil
         package.loaded.suwayomi_ui = nil
         package.loaded.suwayomi_settings = nil
@@ -190,6 +191,38 @@ describe("suwayomi plugin", function()
             }
         end
 
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                getPartialPath = function(_, chapter_path)
+                    return chapter_path .. ".part"
+                end,
+                chapterExists = function()
+                    return false
+                end,
+                downloadChapterWithProgress = function(self, _, download_directory, manga, chapter, progress_path)
+                    self:writeProgress(progress_path, "downloaded", 1, 1, download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz")
+                end,
+                writeProgress = function(_, progress_path, state, current, total, path, error_message)
+                    local handle = io.open(progress_path, "w")
+                    if not handle then
+                        return
+                    end
+                    handle:write("state=", tostring(state or ""), "\n")
+                    handle:write("current=", tostring(current or 0), "\n")
+                    handle:write("total=", tostring(total or 0), "\n")
+                    handle:write("path=", tostring(path or ""), "\n")
+                    if error_message then
+                        handle:write("error=", tostring(error_message), "\n")
+                    end
+                    handle:close()
+                end,
+            }
+        end
+
         package.preload.suwayomi_ui = function()
             return {
                 showDirectoryChooser = function(callback)
@@ -263,6 +296,7 @@ describe("suwayomi plugin", function()
         package.preload["ui/widget/infomessage"] = nil
         package.preload["ui/widget/container/widgetcontainer"] = nil
         package.preload.suwayomi_api = nil
+        package.preload.suwayomi_download_queue = nil
         package.preload.suwayomi_downloader = nil
         package.preload.suwayomi_ui = nil
         package.preload.suwayomi_settings = nil

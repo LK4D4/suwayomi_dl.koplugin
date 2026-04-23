@@ -190,4 +190,26 @@ describe("suwayomi_ui", function()
         shown_dialog.onConfirm("/storage/emulated/0/Books/Manga")
         assert.are.equal("/storage/emulated/0/Books/Manga", chosen_path)
     end)
+
+    it("updates an existing language menu instead of requiring a new menu", function()
+        local ui = require("suwayomi_ui")
+        local update_count = 0
+        local menu = {
+            updateItems = function()
+                update_count = update_count + 1
+            end,
+        }
+
+        ui.updateLanguageMenu(menu, {
+            languages = {
+                { code = "en", label = "EN", enabled = true },
+                { code = "ru", label = "RU", enabled = false },
+            },
+        }, function() end)
+
+        assert.are.equal("[x] EN", menu.item_table[1].text)
+        assert.are.equal("[ ] RU", menu.item_table[2].text)
+        assert.are.equal("Done", menu.item_table[3].text)
+        assert.are.equal(1, update_count)
+    end)
 end)
