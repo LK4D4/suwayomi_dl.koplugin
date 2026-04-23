@@ -176,6 +176,8 @@ function SuwayomiPlugin:browseSuwayomi()
         return
     end
 
+    self:syncPendingReadMarks(credentials)
+
     local result = SuwayomiAPI.fetchSources(credentials)
     if not result.ok then
         self:showMessage(_(result.error))
@@ -285,6 +287,7 @@ function SuwayomiPlugin:upsertChapterLedgerEntry(manga, chapter, updates)
         chapter_name = chapter.name or existing.chapter_name,
         read = existing.read == true,
         path = existing.path,
+        pending_read_sync = existing.pending_read_sync == true or nil,
     }
 
     for update_key, value in pairs(updates or {}) do
@@ -313,7 +316,9 @@ function SuwayomiPlugin:mergeChaptersWithReadLedger(manga, chapters)
 
         local key = self:getChapterLedgerKey(manga, item)
         local entry = ledger[key]
-        local is_read = item.is_read == true or (entry and entry.read == true)
+        local suwayomi_is_read = item.is_read == true
+        local is_read = suwayomi_is_read or (entry and entry.read == true)
+        item._suwayomi_is_read = suwayomi_is_read
         item.is_read = is_read
 
         if is_read then
@@ -324,6 +329,7 @@ function SuwayomiPlugin:mergeChaptersWithReadLedger(manga, chapters)
                 chapter_name = item.name,
                 read = true,
                 path = entry and entry.path or nil,
+                pending_read_sync = suwayomi_is_read and nil or (entry and entry.pending_read_sync == true or nil),
             }
             changed = true
         end
@@ -389,8 +395,12 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
         if download_directory and download_directory ~= "" then
             _, chapter_path = SuwayomiDownloader:getTargetPath(download_directory, manga, item)
             chapter_exists = SuwayomiDownloader:chapterExists(chapter_path)
-            if chapter_exists and self:isChapterPathFinishedInKoreader(chapter_path) then
+            local metadata_finished = chapter_exists and self:isChapterPathFinishedInKoreader(chapter_path)
+            if metadata_finished then
                 item.is_read = true
+                if item._suwayomi_is_read ~= true then
+                    item.pending_read_sync = true
+                end
             end
         end
 
@@ -405,7 +415,11 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
         item.menu_text = self:formatChapterMenuText(item, status)
 
         if chapter_exists then
-            self:upsertChapterLedgerEntry(manga, item, { path = chapter_path, read = item.is_read == true })
+            self:upsertChapterLedgerEntry(manga, item, {
+                path = chapter_path,
+                read = item.is_read == true,
+                pending_read_sync = item.pending_read_sync == true or nil,
+            })
         end
 
         table.insert(items, item)
@@ -448,17 +462,56 @@ function SuwayomiPlugin:markLedgerEntryRead(entry)
     end
 
     ledger[key].read = true
+    ledger[key].pending_read_sync = true
     self:saveChapterLedger(ledger)
 
     local credentials = SuwayomiSettings:load()
     if credentials.server_url ~= "" and SuwayomiAPI.markChapterRead then
         local result = SuwayomiAPI.markChapterRead(credentials, entry.chapter_id)
-        if not result.ok then
+        if result.ok then
+            ledger = self:loadChapterLedger()
+            if ledger[key] then
+                ledger[key].pending_read_sync = nil
+                self:saveChapterLedger(ledger)
+            end
+        else
             self:showMessage(_(result.error))
         end
     end
 
     return true
+end
+
+function SuwayomiPlugin:syncPendingReadMarks(credentials)
+    if not SuwayomiAPI.markChapterRead then
+        return 0
+    end
+
+    credentials = credentials or SuwayomiSettings:load()
+    if not credentials or credentials.server_url == "" then
+        return 0
+    end
+
+    local ledger = self:loadChapterLedger()
+    local synced = 0
+    local changed = false
+
+    for key, entry in pairs(ledger) do
+        if entry.read == true and entry.pending_read_sync == true and entry.chapter_id then
+            local result = SuwayomiAPI.markChapterRead(credentials, entry.chapter_id)
+            if result.ok then
+                ledger[key].pending_read_sync = nil
+                synced = synced + 1
+                changed = true
+            end
+        end
+    end
+
+    if changed then
+        self:saveChapterLedger(ledger)
+    end
+
+    return synced
 end
 
 function SuwayomiPlugin:onCloseDocument()

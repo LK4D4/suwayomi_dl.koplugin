@@ -856,6 +856,7 @@ return {
 
         assert.are.equal("Official_Vol. 1 Ch. 4 [read] [downloaded]", shown_chapter_menu.chapters[1].menu_text)
         assert.is_true(saved_ledger["m1:401"].read)
+        assert.is_true(saved_ledger["m1:401"].pending_read_sync)
     end)
 
     it("marks a known downloaded chapter read when KOReader closes it as finished", function()
@@ -920,6 +921,211 @@ return {
 
         assert.is_true(saved_ledger["m1:398"].read)
         assert.are.equal("398", marked_chapter_id)
+    end)
+
+    it("keeps a pending read sync when Suwayomi cannot be updated", function()
+        local saved_ledger = {
+            ["m1:398"] = {
+                manga_id = "m1",
+                manga_title = "Sousou no Frieren",
+                chapter_id = "398",
+                chapter_name = "Official_Vol. 1 Ch. 1",
+                path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+                read = false,
+            },
+        }
+
+        package.preload.suwayomi_api = function()
+            return {
+                markChapterRead = function()
+                    return { ok = false, error = "offline" }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return saved_ledger end,
+                saveChapterLedger = function(_, ledger)
+                    saved_ledger = ledger
+                    return ledger
+                end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{
+            ui = {
+                document = {
+                    file = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+                },
+                doc_settings = {
+                    readSetting = function(_, key)
+                        if key == "summary" then
+                            return { status = "finished" }
+                        end
+                    end,
+                },
+            },
+        }
+
+        plugin:onCloseDocument()
+
+        assert.is_true(saved_ledger["m1:398"].read)
+        assert.is_true(saved_ledger["m1:398"].pending_read_sync)
+    end)
+
+    it("retries pending read syncs and clears them after Suwayomi accepts", function()
+        local saved_ledger = {
+            ["m1:398"] = {
+                manga_id = "m1",
+                manga_title = "Sousou no Frieren",
+                chapter_id = "398",
+                chapter_name = "Official_Vol. 1 Ch. 1",
+                path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+                read = true,
+                pending_read_sync = true,
+            },
+        }
+        local marked_chapter_id
+
+        package.preload.suwayomi_api = function()
+            return {
+                markChapterRead = function(credentials, chapter_id)
+                    marked_chapter_id = chapter_id
+                    assert.are.equal("https://suwayomi.example", credentials.server_url)
+                    return { ok = true, chapter = { id = chapter_id, is_read = true } }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return saved_ledger end,
+                saveChapterLedger = function(_, ledger)
+                    saved_ledger = ledger
+                    return ledger
+                end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+
+        plugin:syncPendingReadMarks()
+
+        assert.are.equal("398", marked_chapter_id)
+        assert.is_true(saved_ledger["m1:398"].read)
+        assert.is_nil(saved_ledger["m1:398"].pending_read_sync)
+    end)
+
+    it("keeps pending read sync while a retry still fails during browsing", function()
+        local shown_chapter_menu
+        local saved_ledger = {
+            ["m1:398"] = {
+                manga_id = "m1",
+                manga_title = "Sousou no Frieren",
+                chapter_id = "398",
+                chapter_name = "Official_Vol. 1 Ch. 1",
+                path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+                read = true,
+                pending_read_sync = true,
+            },
+        }
+
+        package.preload.suwayomi_api = function()
+            return {
+                markChapterRead = function()
+                    return { ok = false, error = "offline" }
+                end,
+                fetchSources = function()
+                    return { ok = true, sources = { { id = "s1", name = "MangaDex", lang = "en" } } }
+                end,
+                fetchMangaForSource = function()
+                    return { ok = true, manga = { { id = "m1", title = "Sousou no Frieren" } } }
+                end,
+                fetchChaptersForManga = function()
+                    return { ok = true, chapters = { { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = false } } }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function(_, chapter_path)
+                    return chapter_path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz"
+                end,
+            }
+        end
+
+        package.preload.suwayomi_ui = function()
+            return {
+                showSourcesMenu = function(sources, onSelect)
+                    onSelect(sources[1])
+                end,
+                showMangaMenu = function(manga, onSelect)
+                    onSelect(manga[1])
+                end,
+                showChapterMenu = function(options)
+                    shown_chapter_menu = options
+                end,
+                showDirectoryChooser = function() end,
+                showLoginDialog = function() end,
+                showLanguageMenu = function() end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadSourceLanguages = function() return { "en" } end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return saved_ledger end,
+                saveChapterLedger = function(_, ledger)
+                    saved_ledger = ledger
+                    return ledger
+                end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_ui = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        plugin:browseSuwayomi()
+
+        assert.are.equal("Official_Vol. 1 Ch. 1 [read] [downloaded]", shown_chapter_menu.chapters[1].menu_text)
+        assert.is_true(saved_ledger["m1:398"].pending_read_sync)
     end)
 
     it("shows the downloader error when chapter download fails", function()
