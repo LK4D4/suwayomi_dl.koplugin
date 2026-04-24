@@ -780,7 +780,8 @@ function SuwayomiPlugin:deleteChapterFromDeviceWithOptions(manga, chapter, optio
     return true, cancelled and "queued" or "deleted"
 end
 
-function SuwayomiPlugin:markChapterRead(manga, chapter)
+function SuwayomiPlugin:markChapterRead(manga, chapter, options)
+    options = options or {}
     local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
     if downloaded and chapter_path then
         self:setKoreaderChapterReadState(chapter_path, true)
@@ -799,12 +800,17 @@ function SuwayomiPlugin:markChapterRead(manga, chapter)
             end
         end
     end
-    self:refreshChapterMenu()
-    self:schedulePendingReadSync()
+    if not options.skip_refresh then
+        self:refreshChapterMenu()
+    end
+    if not options.skip_schedule then
+        self:schedulePendingReadSync()
+    end
     return true
 end
 
-function SuwayomiPlugin:markChapterUnread(manga, chapter)
+function SuwayomiPlugin:markChapterUnread(manga, chapter, options)
+    options = options or {}
     local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
     if downloaded and chapter_path then
         self:setKoreaderChapterReadState(chapter_path, false)
@@ -816,7 +822,7 @@ function SuwayomiPlugin:markChapterUnread(manga, chapter)
     if entry then
         entry.read = nil
         entry.pending_read_sync = nil
-        entry.path = entry.path or chapter_path
+        entry.path = entry.path or (downloaded and chapter_path or nil)
         if not entry.path then
             ledger[key] = nil
         else
@@ -834,7 +840,9 @@ function SuwayomiPlugin:markChapterUnread(manga, chapter)
         end
     end
 
-    self:refreshChapterMenu()
+    if not options.skip_refresh then
+        self:refreshChapterMenu()
+    end
     return true
 end
 
@@ -862,6 +870,8 @@ function SuwayomiPlugin:getBulkChapterActions()
     return {
         { id = "download_selected", text = _("Download selected") },
         { id = "delete_selected", text = _("Delete selected from device") },
+        { id = "mark_read_selected", text = _("Mark selected as read") },
+        { id = "mark_unread_selected", text = _("Mark selected as unread") },
         { id = "clear_selection", text = _("Clear selection") },
     }
 end
@@ -957,6 +967,56 @@ function SuwayomiPlugin:deleteSelectedChapters()
     return deleted
 end
 
+function SuwayomiPlugin:markSelectedChaptersRead()
+    if not self.current_chapter_context then
+        return 0
+    end
+
+    local manga = self.current_chapter_context.manga
+    local chapters = self:getSelectedChapters(manga, self.current_chapter_context.chapters)
+    if #chapters == 0 then
+        self:showMessage(_("No chapters selected."))
+        return 0
+    end
+
+    for _, chapter in ipairs(chapters) do
+        self:markChapterRead(manga, chapter, {
+            skip_refresh = true,
+            skip_schedule = true,
+        })
+    end
+
+    self:clearChapterSelection(true)
+    self:refreshChapterMenu()
+    self:schedulePendingReadSync()
+    self:showMessage(T(_("Marked %1 selected chapters as read."), #chapters))
+    return #chapters
+end
+
+function SuwayomiPlugin:markSelectedChaptersUnread()
+    if not self.current_chapter_context then
+        return 0
+    end
+
+    local manga = self.current_chapter_context.manga
+    local chapters = self:getSelectedChapters(manga, self.current_chapter_context.chapters)
+    if #chapters == 0 then
+        self:showMessage(_("No chapters selected."))
+        return 0
+    end
+
+    for _, chapter in ipairs(chapters) do
+        self:markChapterUnread(manga, chapter, {
+            skip_refresh = true,
+        })
+    end
+
+    self:clearChapterSelection(true)
+    self:refreshChapterMenu()
+    self:showMessage(T(_("Marked %1 selected chapters as unread."), #chapters))
+    return #chapters
+end
+
 function SuwayomiPlugin:performBulkChapterAction(action_id)
     if action_id == "download_selected" then
         self:downloadSelectedChapters()
@@ -964,6 +1024,14 @@ function SuwayomiPlugin:performBulkChapterAction(action_id)
     end
     if action_id == "delete_selected" then
         self:deleteSelectedChapters()
+        return true
+    end
+    if action_id == "mark_read_selected" then
+        self:markSelectedChaptersRead()
+        return true
+    end
+    if action_id == "mark_unread_selected" then
+        self:markSelectedChaptersUnread()
         return true
     end
     if action_id == "clear_selection" then

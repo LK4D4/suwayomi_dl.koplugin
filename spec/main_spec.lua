@@ -1019,7 +1019,9 @@ describe("suwayomi plugin", function()
         assert.are.equal("2 selected chapters", shown_actions_menu.title)
         assert.are.equal("Download selected", shown_actions_menu.actions[1].text)
         assert.are.equal("Delete selected from device", shown_actions_menu.actions[2].text)
-        assert.are.equal("Clear selection", shown_actions_menu.actions[3].text)
+        assert.are.equal("Mark selected as read", shown_actions_menu.actions[3].text)
+        assert.are.equal("Mark selected as unread", shown_actions_menu.actions[4].text)
+        assert.are.equal("Clear selection", shown_actions_menu.actions[5].text)
 
         plugin:performBulkChapterAction("download_selected")
         run_scheduled_callbacks()
@@ -1224,6 +1226,174 @@ describe("suwayomi plugin", function()
         assert.are.equal("downloading", plugin:getDownloadQueue():getStatus(manga, active).state)
         assert.is_true(existing["/books/Sousou no Frieren/Official_Vol. 1 Ch. 2.cbz"])
         assert.are.equal("Deleted 1 selected chapters from device. 1 download is still in progress.", shown_messages[#shown_messages])
+    end)
+
+    it("marks selected chapters read and schedules one background sync", function()
+        local saved_ledger = {}
+        local marked_ids = {}
+        local menu_updates = 0
+
+        package.preload.suwayomi_api = function()
+            return {
+                markChapterRead = function(_, chapter_id)
+                    table.insert(marked_ids, chapter_id)
+                    return { ok = true, chapter = { id = chapter_id, is_read = true } }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function()
+                    return false
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return saved_ledger end,
+                saveChapterLedger = function(_, ledger)
+                    saved_ledger = ledger
+                    return ledger
+                end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        plugin.current_chapter_context = {
+            manga = { id = "m1", title = "Sousou no Frieren" },
+            chapters = {
+                { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = false },
+                { id = "399", name = "Official_Vol. 1 Ch. 2", is_read = false },
+            },
+        }
+        plugin.current_chapter_menu = {
+            updateItems = function()
+                menu_updates = menu_updates + 1
+            end,
+        }
+        plugin.selected_chapters = { ["m1:398"] = true, ["m1:399"] = true }
+        plugin.selection_mode = true
+
+        plugin:performBulkChapterAction("mark_read_selected")
+
+        assert.is_true(saved_ledger["m1:398"].read)
+        assert.is_true(saved_ledger["m1:398"].pending_read_sync)
+        assert.is_true(saved_ledger["m1:399"].read)
+        assert.is_true(saved_ledger["m1:399"].pending_read_sync)
+        assert.is_true(plugin.current_chapter_context.chapters[1].is_read)
+        assert.is_true(plugin.current_chapter_context.chapters[2].is_read)
+        assert.is_false(plugin.selection_mode)
+        assert.are.equal(1, menu_updates)
+        assert.are.equal("Marked 2 selected chapters as read.", shown_messages[#shown_messages])
+
+        run_scheduled_callbacks()
+
+        table.sort(marked_ids)
+        assert.are.same({ "398", "399" }, marked_ids)
+        assert.is_nil(saved_ledger["m1:398"].pending_read_sync)
+        assert.is_nil(saved_ledger["m1:399"].pending_read_sync)
+    end)
+
+    it("marks selected chapters unread locally", function()
+        local saved_ledger = {
+            ["m1:398"] = {
+                manga_id = "m1",
+                manga_title = "Sousou no Frieren",
+                chapter_id = "398",
+                chapter_name = "Official_Vol. 1 Ch. 1",
+                read = true,
+                pending_read_sync = true,
+                path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+            },
+            ["m1:399"] = {
+                manga_id = "m1",
+                manga_title = "Sousou no Frieren",
+                chapter_id = "399",
+                chapter_name = "Official_Vol. 1 Ch. 2",
+                read = true,
+                pending_read_sync = true,
+            },
+        }
+        local menu_updates = 0
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function(_, chapter_path)
+                    return chapter_path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz"
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return saved_ledger end,
+                saveChapterLedger = function(_, ledger)
+                    saved_ledger = ledger
+                    return ledger
+                end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        plugin.current_chapter_context = {
+            manga = { id = "m1", title = "Sousou no Frieren" },
+            chapters = {
+                { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = true },
+                { id = "399", name = "Official_Vol. 1 Ch. 2", is_read = true },
+            },
+        }
+        plugin.current_chapter_menu = {
+            updateItems = function()
+                menu_updates = menu_updates + 1
+            end,
+        }
+        plugin.selected_chapters = { ["m1:398"] = true, ["m1:399"] = true }
+        plugin.selection_mode = true
+
+        plugin:performBulkChapterAction("mark_unread_selected")
+
+        assert.is_false(saved_ledger["m1:398"].read)
+        assert.is_nil(saved_ledger["m1:398"].pending_read_sync)
+        assert.is_equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", saved_ledger["m1:398"].path)
+        assert.is_nil(saved_ledger["m1:399"])
+        assert.is_false(plugin.current_chapter_context.chapters[1].is_read)
+        assert.is_false(plugin.current_chapter_context.chapters[2].is_read)
+        assert.is_false(plugin.selection_mode)
+        assert.are.equal(1, menu_updates)
+        assert.are.equal("Marked 2 selected chapters as unread.", shown_messages[#shown_messages])
     end)
 
     it("opens a downloaded chapter from the chapter actions menu", function()
