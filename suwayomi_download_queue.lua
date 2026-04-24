@@ -196,7 +196,7 @@ function DownloadQueue:formatChapterMenuText(chapter, status)
             table.insert(symbols, T(_("↓ %1/%2"), status.current, status.total))
             return self:formatChapterStatusSymbols(chapter, symbols)
         end
-        table.insert(symbols, "↓")
+        table.insert(symbols, "⏳")
         return self:formatChapterStatusSymbols(chapter, symbols)
     end
     if status.state == "downloaded" or status.state == "skipped" then

@@ -66,9 +66,11 @@ function SuwayomiPlugin:showNotImplemented(message)
     self:showMessage(message)
 end
 
-function SuwayomiPlugin:showMessage(message)
+function SuwayomiPlugin:showMessage(message, options)
+    options = options or {}
     UIManager:show(InfoMessage:new{
         text = message,
+        timeout = options.timeout,
     })
 end
 
@@ -966,7 +968,7 @@ function SuwayomiPlugin:enqueueSelectedChapterDownloads(manga, chapters, downloa
     self:clearChapterSelection(true)
     self:refreshChapterMenu()
 
-    if queued > 0 or skipped > 0 then
+    if queued == 0 and skipped > 0 then
         self:showMessage(self:formatBulkDownloadMessage(queued, skipped))
     end
     return queued

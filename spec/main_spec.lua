@@ -1090,7 +1090,53 @@ describe("suwayomi plugin", function()
 
         assert.are.equal(2, #saved_queue)
         assert.is_false(plugin.selection_mode)
-        assert.are.equal("Queued 1 selected chapter download. Skipped 2 already downloaded or queued.", shown_messages[#shown_messages])
+        assert.are.same({}, shown_messages)
+    end)
+
+    it("shows a short-lived message when bulk download only skips chapters", function()
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function()
+                    return true
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return {} end,
+                saveChapterLedger = function(_, ledger) return ledger end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        plugin.current_chapter_context = {
+            manga = { id = "m1", title = "Sousou no Frieren" },
+            chapters = {
+                { id = "398", name = "Official_Vol. 1 Ch. 1" },
+            },
+        }
+        plugin.selected_chapters = { ["m1:398"] = true }
+        plugin.selection_mode = true
+
+        plugin:performBulkChapterAction("download_selected")
+
+        assert.are.equal("No new downloads queued. Skipped 1 already downloaded or queued.", shown_messages[#shown_messages])
     end)
 
     it("deletes selected downloaded chapters from bulk actions", function()

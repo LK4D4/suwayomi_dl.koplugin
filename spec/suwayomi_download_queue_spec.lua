@@ -236,6 +236,13 @@ describe("suwayomi_download_queue", function()
             )
         )
         assert.are.equal(
+            "Official_Vol. 25 Ch. 126 A Very Long Chapter Title  ⏳",
+            context.queue:formatChapterMenuText(
+                { id = "398", name = "Official_Vol. 25 Ch. 126 A Very Long Chapter Title" },
+                { state = "downloading", current = 0, total = 0 }
+            )
+        )
+        assert.are.equal(
             "Official_Vol. 25 Ch. 127 Another Long Chapter Title  ⚠",
             context.queue:formatChapterMenuText(
                 { id = "399", name = "Official_Vol. 25 Ch. 127 Another Long Chapter Title" },
