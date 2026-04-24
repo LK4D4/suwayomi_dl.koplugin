@@ -234,10 +234,7 @@ function SuwayomiPlugin:showChaptersForManga(manga)
         chapters = chapters,
     }
 
-    self.current_chapter_options = {
-        title = manga.title,
-        chapters = self:buildChapterMenuItems(manga, chapters),
-    }
+    self.current_chapter_options = self:buildChapterMenuOptions(manga, chapters)
     self.current_chapter_menu = SuwayomiUI.showChapterMenu(self.current_chapter_options, function(chapter)
         self:handleChapterTap(manga, chapter)
     end, function(chapter)
@@ -305,10 +302,6 @@ function SuwayomiPlugin:clearChapterSelection(skip_refresh)
 end
 
 function SuwayomiPlugin:toggleChapterSelection(manga, chapter)
-    if chapter and chapter._suwayomi_bulk_actions then
-        return
-    end
-
     self.selected_chapters = self.selected_chapters or {}
     local key = self:getChapterSelectionKey(manga, chapter)
     if self.selected_chapters[key] then
@@ -321,11 +314,6 @@ function SuwayomiPlugin:toggleChapterSelection(manga, chapter)
 end
 
 function SuwayomiPlugin:handleChapterTap(manga, chapter)
-    if chapter and chapter._suwayomi_bulk_actions then
-        self:showBulkChapterActions(manga)
-        return
-    end
-
     if self.selection_mode then
         self:toggleChapterSelection(manga, chapter)
         return
@@ -648,13 +636,6 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
     local history_paths = self:loadKoreaderHistoryPaths()
     local items = {}
 
-    if self.selection_mode then
-        table.insert(items, {
-            _suwayomi_bulk_actions = true,
-            menu_text = T(_("Actions for %1 selected"), self:getSelectedChapterCount()),
-        })
-    end
-
     for _, chapter in ipairs(chapters or {}) do
         local item = {}
         for key, value in pairs(chapter) do
@@ -708,6 +689,28 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
     end
 
     return items
+end
+
+function SuwayomiPlugin:buildChapterMenuOptions(manga, chapters)
+    local selected_count = self:getSelectedChapterCount()
+    local title = manga.title
+    if self.selection_mode then
+        title = T(_("%1 selected"), selected_count)
+    end
+
+    return {
+        title = title,
+        chapters = self:buildChapterMenuItems(manga, chapters),
+        title_bar_left_icon = "appbar.menu",
+        on_title_bar_left_tap = function()
+            if self:getSelectedChapterCount() == 0 then
+                self:showMessage(_("Long-press chapters to select them."), { timeout = 2 })
+                return true
+            end
+            self:showBulkChapterActions(manga)
+            return true
+        end,
+    }
 end
 
 function SuwayomiPlugin:getChapterPath(manga, chapter)
@@ -1290,13 +1293,15 @@ function SuwayomiPlugin:refreshChapterMenu()
         return
     end
 
-    local options = {
-        title = self.current_chapter_context.manga.title,
-        chapters = self:buildChapterMenuItems(self.current_chapter_context.manga, self.current_chapter_context.chapters),
-    }
+    local options = self:buildChapterMenuOptions(
+        self.current_chapter_context.manga,
+        self.current_chapter_context.chapters
+    )
     self.current_chapter_options = self.current_chapter_options or {}
     self.current_chapter_options.title = options.title
     self.current_chapter_options.chapters = options.chapters
+    self.current_chapter_options.title_bar_left_icon = options.title_bar_left_icon
+    self.current_chapter_options.on_title_bar_left_tap = options.on_title_bar_left_tap
 
     if SuwayomiUI.updateChapterMenu then
         SuwayomiUI.updateChapterMenu(self.current_chapter_menu, options, function(chapter)

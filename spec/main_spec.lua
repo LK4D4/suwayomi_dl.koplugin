@@ -817,8 +817,10 @@ describe("suwayomi plugin", function()
                     hold_chapter = onHold
                     return fake_chapter_menu
                 end,
-                updateChapterMenu = function(_, options)
+                updateChapterMenu = function(_, options, onSelect, onHold)
                     shown_chapter_menu = options
+                    tap_chapter = onSelect
+                    hold_chapter = onHold
                     fake_chapter_menu:updateItems()
                 end,
                 showChapterActionsMenu = function(options)
@@ -854,34 +856,38 @@ describe("suwayomi plugin", function()
         local plugin = plugin_class{}
         plugin:browseSuwayomi()
 
+        assert.are.equal("appbar.menu", shown_chapter_menu.title_bar_left_icon)
+        assert.is_function(shown_chapter_menu.on_title_bar_left_tap)
+
         hold_chapter(shown_chapter_menu.chapters[1])
 
-        assert.are.equal("Actions for 1 selected", shown_chapter_menu.chapters[1].menu_text)
-        assert.are.equal("[x] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[2].menu_text)
-        assert.are.equal("[ ] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[3].menu_text)
+        assert.are.equal("1 selected", shown_chapter_menu.title)
+        assert.are.equal("[x] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.are.equal("[ ] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
         assert.is_true(plugin.selection_mode)
         assert.is_true(plugin:isChapterSelected("m1", "398"))
         assert.are.equal(1, menu_updates)
 
-        tap_chapter(shown_chapter_menu.chapters[3])
+        tap_chapter(shown_chapter_menu.chapters[2])
 
         assert.is_nil(shown_actions_menu)
-        assert.are.equal("Actions for 2 selected", shown_chapter_menu.chapters[1].menu_text)
-        assert.are.equal("[x] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[2].menu_text)
-        assert.are.equal("[x] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[3].menu_text)
+        assert.are.equal("2 selected", shown_chapter_menu.title)
+        assert.are.equal("[x] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.are.equal("[x] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
         assert.is_true(plugin:isChapterSelected("m1", "399"))
         assert.are.equal(2, menu_updates)
 
         plugin:toggleChapterSelection({ id = "m1" }, { id = "398", name = "Official_Vol. 1 Ch. 1" })
 
-        assert.are.equal("Actions for 1 selected", shown_chapter_menu.chapters[1].menu_text)
-        assert.are.equal("[ ] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[2].menu_text)
-        assert.are.equal("[x] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[3].menu_text)
+        assert.are.equal("1 selected", shown_chapter_menu.title)
+        assert.are.equal("[ ] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.are.equal("[x] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
         assert.is_false(plugin:isChapterSelected("m1", "398"))
         assert.is_true(plugin.selection_mode)
 
         plugin:toggleChapterSelection({ id = "m1" }, { id = "399", name = "Official_Vol. 1 Ch. 2" })
 
+        assert.are.equal("Sousou no Frieren", shown_chapter_menu.title)
         assert.are.equal("Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
         assert.are.equal("Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
         assert.is_false(plugin:isChapterSelected("m1", "399"))
@@ -896,6 +902,7 @@ describe("suwayomi plugin", function()
         local shown_chapter_menu
         local tap_chapter
         local hold_chapter
+        local tap_bulk_actions
         local shown_actions_menu
         local download_calls = {}
         local menu_updates = 0
@@ -963,12 +970,14 @@ describe("suwayomi plugin", function()
                 end,
                 showChapterMenu = function(options, onSelect, onHold)
                     shown_chapter_menu = options
+                    tap_bulk_actions = options.on_title_bar_left_tap
                     tap_chapter = onSelect
                     hold_chapter = onHold
                     return fake_chapter_menu
                 end,
                 updateChapterMenu = function(_, options, onSelect, onHold)
                     shown_chapter_menu = options
+                    tap_bulk_actions = options.on_title_bar_left_tap
                     tap_chapter = onSelect
                     hold_chapter = onHold
                     fake_chapter_menu:updateItems()
@@ -1007,14 +1016,15 @@ describe("suwayomi plugin", function()
         plugin:browseSuwayomi()
 
         hold_chapter(shown_chapter_menu.chapters[1])
-        tap_chapter(shown_chapter_menu.chapters[4])
+        tap_chapter(shown_chapter_menu.chapters[3])
 
-        assert.are.equal("Actions for 2 selected", shown_chapter_menu.chapters[1].menu_text)
-        assert.are.equal("[x] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[2].menu_text)
-        assert.are.equal("[ ] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[3].menu_text)
-        assert.are.equal("[x] Official_Vol. 1 Ch. 3", shown_chapter_menu.chapters[4].menu_text)
+        assert.are.equal("2 selected", shown_chapter_menu.title)
+        assert.are.equal("appbar.menu", shown_chapter_menu.title_bar_left_icon)
+        assert.are.equal("[x] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.are.equal("[ ] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
+        assert.are.equal("[x] Official_Vol. 1 Ch. 3", shown_chapter_menu.chapters[3].menu_text)
 
-        tap_chapter(shown_chapter_menu.chapters[1])
+        tap_bulk_actions()
 
         assert.are.equal("2 selected chapters", shown_actions_menu.title)
         assert.are.equal("Download selected", shown_actions_menu.actions[1].text)
