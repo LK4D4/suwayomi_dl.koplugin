@@ -237,6 +237,18 @@ describe("suwayomi_download_queue", function()
         assert.are.equal("Chapter download is already in progress.", context.messages[#context.messages])
     end)
 
+    it("can suppress the duplicate download message for bulk enqueue", function()
+        local context = build_queue({ subprocess_done = false })
+        local manga = { id = "m1", title = "Sousou no Frieren" }
+        local chapter = { id = "398", name = "Official_Vol. 1 Ch. 1" }
+
+        assert.is_true(context.queue:enqueue(manga, chapter, "/books"))
+        assert.is_false(context.queue:enqueue(manga, chapter, "/books", { quiet_duplicate = true }))
+
+        assert.are.equal(1, #context.saved_queue())
+        assert.are.same({}, context.messages)
+    end)
+
     it("persists failed state when the downloader reports failure", function()
         local context = build_queue({
             downloader = {

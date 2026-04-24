@@ -851,7 +851,7 @@ end
 function SuwayomiPlugin:enqueueSelectedChapterDownloads(manga, chapters, download_directory)
     local queued = 0
     for _, chapter in ipairs(chapters or {}) do
-        if self:getDownloadQueue():enqueue(manga, chapter, download_directory) then
+        if self:getDownloadQueue():enqueue(manga, chapter, download_directory, { quiet_duplicate = true }) then
             queued = queued + 1
         end
     end

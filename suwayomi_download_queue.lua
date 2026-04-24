@@ -216,10 +216,13 @@ function DownloadQueue:recover()
     end
 end
 
-function DownloadQueue:enqueue(manga, chapter, download_directory)
+function DownloadQueue:enqueue(manga, chapter, download_directory, options)
+    options = options or {}
     local status = self:getStatus(manga, chapter)
     if status and (status.state == "queued" or status.state == "downloading") then
-        self.onMessage(_("Chapter download is already in progress."))
+        if not options.quiet_duplicate then
+            self.onMessage(_("Chapter download is already in progress."))
+        end
         return false
     end
     if status and status.state == "failed" then
