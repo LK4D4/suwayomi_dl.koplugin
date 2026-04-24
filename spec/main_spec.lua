@@ -1147,7 +1147,7 @@ describe("suwayomi plugin", function()
         assert.is_nil(saved_ledger["m1:398"].pending_read_sync)
     end)
 
-    it("keeps locally read chapters read even when Suwayomi reports unread", function()
+    it("does not keep stale ledger read state when Suwayomi and KOReader are unread", function()
         local shown_chapter_menu
         local saved_ledger = {
             ["m1:398"] = {
@@ -1214,8 +1214,8 @@ describe("suwayomi plugin", function()
         local plugin = plugin_class{}
         plugin:browseSuwayomi()
 
-        assert.are.equal("Official_Vol. 1 Ch. 1 [read]", shown_chapter_menu.chapters[1].menu_text)
-        assert.is_true(saved_ledger["m1:398"].read)
+        assert.are.equal("Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.is_nil(saved_ledger["m1:398"])
     end)
 
     it("marks a downloaded chapter read when KOReader sidecar metadata is complete", function()

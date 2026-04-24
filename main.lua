@@ -361,7 +361,8 @@ function SuwayomiPlugin:mergeChaptersWithReadLedger(manga, chapters)
         local key = self:getChapterLedgerKey(manga, item)
         local entry = ledger[key]
         local suwayomi_is_read = item.is_read == true
-        local is_read = suwayomi_is_read or (entry and entry.read == true)
+        local ledger_read_is_pending = entry and entry.read == true and entry.pending_read_sync == true
+        local is_read = suwayomi_is_read or ledger_read_is_pending
         item._suwayomi_is_read = suwayomi_is_read
         item.is_read = is_read
 
@@ -375,6 +376,15 @@ function SuwayomiPlugin:mergeChaptersWithReadLedger(manga, chapters)
                 path = entry and entry.path or nil,
                 pending_read_sync = suwayomi_is_read and nil or (entry and entry.pending_read_sync == true or nil),
             }
+            changed = true
+        elseif entry and entry.read == true then
+            if entry.path then
+                entry.read = nil
+                entry.pending_read_sync = nil
+                ledger[key] = entry
+            else
+                ledger[key] = nil
+            end
             changed = true
         end
 
