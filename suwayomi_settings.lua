@@ -31,6 +31,10 @@ function SuwayomiSettings:open()
     return self.settings
 end
 
+function SuwayomiSettings:getSettingsDir()
+    return DataStorage:getSettingsDir()
+end
+
 function SuwayomiSettings:normalizeServerURL(server_url)
     if not server_url or server_url == "" then
         return ""
