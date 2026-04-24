@@ -729,9 +729,16 @@ function SuwayomiPlugin:openChapter(manga, chapter)
 end
 
 function SuwayomiPlugin:deleteChapterFromDevice(manga, chapter)
+    return self:deleteChapterFromDeviceWithOptions(manga, chapter)
+end
+
+function SuwayomiPlugin:deleteChapterFromDeviceWithOptions(manga, chapter, options)
+    options = options or {}
     local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
     if not downloaded or not chapter_path then
-        self:showMessage(_("This chapter is not downloaded."))
+        if not options.quiet_missing then
+            self:showMessage(_("This chapter is not downloaded."))
+        end
         return false
     end
 
@@ -759,7 +766,9 @@ function SuwayomiPlugin:deleteChapterFromDevice(manga, chapter)
         self:saveChapterLedger(ledger)
     end
 
-    self:refreshChapterMenu()
+    if not options.skip_refresh then
+        self:refreshChapterMenu()
+    end
     return true
 end
 
@@ -844,6 +853,7 @@ end
 function SuwayomiPlugin:getBulkChapterActions()
     return {
         { id = "download_selected", text = _("Download selected") },
+        { id = "delete_selected", text = _("Delete selected from device") },
         { id = "clear_selection", text = _("Clear selection") },
     }
 end
@@ -890,9 +900,44 @@ function SuwayomiPlugin:downloadSelectedChapters()
     return self:enqueueSelectedChapterDownloads(manga, chapters, download_directory)
 end
 
+function SuwayomiPlugin:deleteSelectedChapters()
+    if not self.current_chapter_context then
+        return 0
+    end
+
+    local manga = self.current_chapter_context.manga
+    local chapters = self:getSelectedChapters(manga, self.current_chapter_context.chapters)
+    if #chapters == 0 then
+        self:showMessage(_("No chapters selected."))
+        return 0
+    end
+
+    local deleted = 0
+    for _, chapter in ipairs(chapters) do
+        if self:deleteChapterFromDeviceWithOptions(manga, chapter, {
+            quiet_missing = true,
+            skip_refresh = true,
+        }) then
+            deleted = deleted + 1
+        end
+    end
+
+    self:clearChapterSelection(true)
+    self:refreshChapterMenu()
+
+    if deleted > 0 then
+        self:showMessage(T(_("Deleted %1 selected chapters from device."), deleted))
+    end
+    return deleted
+end
+
 function SuwayomiPlugin:performBulkChapterAction(action_id)
     if action_id == "download_selected" then
         self:downloadSelectedChapters()
+        return true
+    end
+    if action_id == "delete_selected" then
+        self:deleteSelectedChapters()
         return true
     end
     if action_id == "clear_selection" then

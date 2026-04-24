@@ -1018,7 +1018,8 @@ describe("suwayomi plugin", function()
 
         assert.are.equal("2 selected chapters", shown_actions_menu.title)
         assert.are.equal("Download selected", shown_actions_menu.actions[1].text)
-        assert.are.equal("Clear selection", shown_actions_menu.actions[2].text)
+        assert.are.equal("Delete selected from device", shown_actions_menu.actions[2].text)
+        assert.are.equal("Clear selection", shown_actions_menu.actions[3].text)
 
         plugin:performBulkChapterAction("download_selected")
         run_scheduled_callbacks()
@@ -1028,6 +1029,112 @@ describe("suwayomi plugin", function()
         assert.are.equal("Official_Vol. 1 Ch. 1 [downloaded]", shown_chapter_menu.chapters[1].menu_text)
         assert.are.equal("Official_Vol. 1 Ch. 3 [downloaded]", shown_chapter_menu.chapters[3].menu_text)
         assert.is_true(menu_updates > 0)
+    end)
+
+    it("deletes selected downloaded chapters from bulk actions", function()
+        local saved_ledger = {
+            ["m1:398"] = {
+                manga_id = "m1",
+                manga_title = "Sousou no Frieren",
+                chapter_id = "398",
+                chapter_name = "Official_Vol. 1 Ch. 1",
+                path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+                read = true,
+            },
+            ["m1:400"] = {
+                manga_id = "m1",
+                manga_title = "Sousou no Frieren",
+                chapter_id = "400",
+                chapter_name = "Official_Vol. 1 Ch. 3",
+                path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 3.cbz",
+            },
+        }
+        local existing = {
+            ["/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz"] = true,
+            ["/books/Sousou no Frieren/Official_Vol. 1 Ch. 3.cbz"] = true,
+        }
+        local removed_paths = {}
+        local menu_updates = 0
+        local original_remove = os.remove
+
+        os.remove = function(path)
+            table.insert(removed_paths, path)
+            existing[path] = nil
+            return true
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function(_, chapter_path)
+                    return existing[chapter_path] == true
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return saved_ledger end,
+                saveChapterLedger = function(_, ledger)
+                    saved_ledger = ledger
+                    return ledger
+                end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        plugin.current_chapter_context = {
+            manga = { id = "m1", title = "Sousou no Frieren" },
+            chapters = {
+                { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = true },
+                { id = "399", name = "Official_Vol. 1 Ch. 2", is_read = false },
+                { id = "400", name = "Official_Vol. 1 Ch. 3", is_read = false },
+            },
+        }
+        plugin.current_chapter_menu = {
+            updateItems = function()
+                menu_updates = menu_updates + 1
+            end,
+        }
+        plugin.selected_chapters = { ["m1:398"] = true, ["m1:400"] = true }
+        plugin.selection_mode = true
+
+        local bulk_actions = plugin:getBulkChapterActions()
+        assert.are.equal("Delete selected from device", bulk_actions[2].text)
+
+        plugin:performBulkChapterAction("delete_selected")
+        os.remove = original_remove
+
+        assert.are.same({
+            "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+            "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr/metadata.cbz.lua",
+            "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr/metadata.cbz.lua.old",
+            "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr",
+            "/books/Sousou no Frieren/Official_Vol. 1 Ch. 3.cbz",
+            "/books/Sousou no Frieren/Official_Vol. 1 Ch. 3.sdr/metadata.cbz.lua",
+            "/books/Sousou no Frieren/Official_Vol. 1 Ch. 3.sdr/metadata.cbz.lua.old",
+            "/books/Sousou no Frieren/Official_Vol. 1 Ch. 3.sdr",
+        }, removed_paths)
+        assert.is_nil(saved_ledger["m1:398"].path)
+        assert.is_true(saved_ledger["m1:398"].read)
+        assert.is_nil(saved_ledger["m1:400"])
+        assert.is_false(plugin.selection_mode)
+        assert.are.equal(1, menu_updates)
+        assert.are.equal("Deleted 2 selected chapters from device.", shown_messages[#shown_messages])
     end)
 
     it("opens a downloaded chapter from the chapter actions menu", function()

@@ -43,7 +43,7 @@ Goal: make the current Local Source reading loop feel complete and predictable.
 - [x] Add chapter selection mode
 - [x] Add bulk chapter actions entry point
 - [x] Add bulk `Download`
-- [ ] Add bulk `Delete from device`
+- [x] Add bulk `Delete from device`
 - [ ] Add bulk `Mark as read`
 - [ ] Polish chapter status labels so `read`, `downloaded`, `queued`, and `failed` remain easy to scan
 - [ ] Decide and implement final `Mark as unread` behavior:
