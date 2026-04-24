@@ -82,6 +82,7 @@ describe("suwayomi plugin", function()
         package.loaded.suwayomi_downloader = nil
         package.loaded.suwayomi_ui = nil
         package.loaded.suwayomi_settings = nil
+        package.loaded.lfs = nil
 
         package.preload.dispatcher = function()
             return {
@@ -306,6 +307,7 @@ describe("suwayomi plugin", function()
         package.preload.suwayomi_downloader = nil
         package.preload.suwayomi_ui = nil
         package.preload.suwayomi_settings = nil
+        package.preload.lfs = nil
         if original_io_open then
             io.open = original_io_open
         end
@@ -1325,6 +1327,352 @@ return {
         assert.are.equal("Official_Vol. 1 Ch. 4 [read] [downloaded]", shown_chapter_menu.chapters[1].menu_text)
         assert.is_true(saved_ledger["m1:401"].read)
         assert.is_true(saved_ledger["m1:401"].pending_read_sync)
+    end)
+
+    it("writes KOReader sidecar metadata when marking a downloaded chapter read", function()
+        local saved_ledger = {}
+        local files = {
+            ["/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr/metadata.cbz.lua"] = [[
+return {
+    ["doc_path"] = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+    ["bookmark"] = {
+        ["page"] = 4,
+    },
+}
+]],
+        }
+        local original_open = io.open
+
+        io.open = function(path, mode)
+            if path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr/metadata.cbz.lua" then
+                if mode == "r" then
+                    local content = files[path]
+                    if not content then
+                        return nil
+                    end
+                    return {
+                        read = function()
+                            return content
+                        end,
+                        close = function() end,
+                    }
+                end
+                if mode == "w" then
+                    local chunks = {}
+                    return {
+                        write = function(_, ...)
+                            for _, value in ipairs({...}) do
+                                table.insert(chunks, value)
+                            end
+                        end,
+                        close = function()
+                            files[path] = table.concat(chunks)
+                        end,
+                    }
+                end
+            end
+            return original_open(path, mode)
+        end
+
+        package.preload.lfs = function()
+            return {
+                attributes = function(path, attribute)
+                    if path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr" and attribute == "mode" then
+                        return "directory"
+                    end
+                end,
+                mkdir = function()
+                    return true
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function(_, chapter_path)
+                    return chapter_path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz"
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return saved_ledger end,
+                saveChapterLedger = function(_, ledger)
+                    saved_ledger = ledger
+                    return ledger
+                end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_settings = nil
+        package.loaded.lfs = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+
+        plugin:markChapterRead(
+            { id = "m1", title = "Sousou no Frieren" },
+            { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = false }
+        )
+        io.open = original_open
+
+        local metadata = assert(loadstring(files["/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr/metadata.cbz.lua"]))()
+        assert.are.equal(1, metadata.percent_finished)
+        assert.are.equal("complete", metadata.summary.status)
+        assert.are.equal(4, metadata.bookmark.page)
+    end)
+
+    it("writes KOReader sidecar metadata when Suwayomi reports a downloaded chapter read", function()
+        local shown_chapter_menu
+        local saved_ledger = {}
+        local files = {}
+        local dirs = {
+            ["/books/Sousou no Frieren"] = true,
+        }
+        local original_open = io.open
+
+        io.open = function(path, mode)
+            if path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr/metadata.cbz.lua" then
+                if mode == "r" then
+                    return nil
+                end
+                if mode == "w" then
+                    local chunks = {}
+                    return {
+                        write = function(_, ...)
+                            for _, value in ipairs({...}) do
+                                table.insert(chunks, value)
+                            end
+                        end,
+                        close = function()
+                            files[path] = table.concat(chunks)
+                        end,
+                    }
+                end
+            end
+            return original_open(path, mode)
+        end
+
+        package.preload.lfs = function()
+            return {
+                attributes = function(path, attribute)
+                    if attribute == "mode" and dirs[path] then
+                        return "directory"
+                    end
+                end,
+                mkdir = function(path)
+                    dirs[path] = true
+                    return true
+                end,
+            }
+        end
+
+        package.preload.suwayomi_api = function()
+            return {
+                fetchSources = function()
+                    return { ok = true, sources = { { id = "s1", name = "MangaDex", lang = "en" } } }
+                end,
+                fetchMangaForSource = function()
+                    return { ok = true, manga = { { id = "m1", title = "Sousou no Frieren" } } }
+                end,
+                fetchChaptersForManga = function()
+                    return { ok = true, chapters = { { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = true } } }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function(_, chapter_path)
+                    return chapter_path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz"
+                end,
+            }
+        end
+
+        package.preload.suwayomi_ui = function()
+            return {
+                showSourcesMenu = function(sources, onSelect)
+                    onSelect(sources[1])
+                end,
+                showMangaMenu = function(manga, onSelect)
+                    onSelect(manga[1])
+                end,
+                showChapterMenu = function(options)
+                    shown_chapter_menu = options
+                end,
+                showDirectoryChooser = function() end,
+                showLoginDialog = function() end,
+                showLanguageMenu = function() end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadSourceLanguages = function() return { "en" } end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return saved_ledger end,
+                saveChapterLedger = function(_, ledger)
+                    saved_ledger = ledger
+                    return ledger
+                end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_ui = nil
+        package.loaded.suwayomi_settings = nil
+        package.loaded.lfs = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        plugin:browseSuwayomi()
+        io.open = original_open
+
+        assert.are.equal("Official_Vol. 1 Ch. 1 [read] [downloaded]", shown_chapter_menu.chapters[1].menu_text)
+        local metadata = assert(loadstring(files["/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr/metadata.cbz.lua"]))()
+        assert.are.equal(1, metadata.percent_finished)
+        assert.are.equal("complete", metadata.summary.status)
+    end)
+
+    it("clears KOReader sidecar read fields when marking a downloaded chapter unread", function()
+        local saved_ledger = {
+            ["m1:398"] = {
+                manga_id = "m1",
+                manga_title = "Sousou no Frieren",
+                chapter_id = "398",
+                chapter_name = "Official_Vol. 1 Ch. 1",
+                read = true,
+                path = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+            },
+        }
+        local files = {
+            ["/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr/metadata.cbz.lua"] = [[
+return {
+    ["doc_path"] = "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz",
+    ["percent_finished"] = 1,
+    ["summary"] = {
+        ["status"] = "complete",
+        ["other"] = "kept",
+    },
+}
+]],
+        }
+        local original_open = io.open
+
+        io.open = function(path, mode)
+            if path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr/metadata.cbz.lua" then
+                if mode == "r" then
+                    local content = files[path]
+                    if not content then
+                        return nil
+                    end
+                    return {
+                        read = function()
+                            return content
+                        end,
+                        close = function() end,
+                    }
+                end
+                if mode == "w" then
+                    local chunks = {}
+                    return {
+                        write = function(_, ...)
+                            for _, value in ipairs({...}) do
+                                table.insert(chunks, value)
+                            end
+                        end,
+                        close = function()
+                            files[path] = table.concat(chunks)
+                        end,
+                    }
+                end
+            end
+            return original_open(path, mode)
+        end
+
+        package.preload.lfs = function()
+            return {
+                attributes = function(path, attribute)
+                    if path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr" and attribute == "mode" then
+                        return "directory"
+                    end
+                end,
+                mkdir = function()
+                    return true
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function(_, chapter_path)
+                    return chapter_path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz"
+                end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return saved_ledger end,
+                saveChapterLedger = function(_, ledger)
+                    saved_ledger = ledger
+                    return ledger
+                end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_settings = nil
+        package.loaded.lfs = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+
+        plugin:markChapterUnread(
+            { id = "m1", title = "Sousou no Frieren" },
+            { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = true }
+        )
+        io.open = original_open
+
+        local metadata = assert(loadstring(files["/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.sdr/metadata.cbz.lua"]))()
+        assert.are.equal(0, metadata.percent_finished)
+        assert.is_nil(metadata.summary.status)
+        assert.are.equal("kept", metadata.summary.other)
     end)
 
     it("marks a known downloaded chapter read when KOReader closes it as finished", function()

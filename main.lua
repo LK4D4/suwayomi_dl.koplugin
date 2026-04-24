@@ -411,6 +411,143 @@ function SuwayomiPlugin:getKoreaderMetadataPathForDocument(document_path)
     return base_path .. ".sdr/metadata." .. extension .. ".lua"
 end
 
+function SuwayomiPlugin:ensureDirectory(path)
+    if not path or path == "" then
+        return false
+    end
+
+    local ok, lfs = pcall(require, "lfs")
+    if not ok or not lfs then
+        return false
+    end
+
+    if lfs.attributes(path, "mode") == "directory" then
+        return true
+    end
+
+    local parent = path:match("^(.*)/[^/]+$")
+    if parent and parent ~= "" and parent ~= path and lfs.attributes(parent, "mode") ~= "directory" then
+        self:ensureDirectory(parent)
+    end
+
+    return lfs.mkdir(path) or lfs.attributes(path, "mode") == "directory"
+end
+
+function SuwayomiPlugin:loadKoreaderMetadataTable(chapter_path)
+    local metadata_path = self:getKoreaderMetadataPathForDocument(chapter_path)
+    local metadata = {
+        doc_path = chapter_path,
+    }
+    local handle = metadata_path and io.open(metadata_path, "r")
+    if not handle then
+        return metadata, metadata_path
+    end
+
+    local content = handle:read("*a") or ""
+    handle:close()
+
+    local loader = loadstring(content)
+    if not loader then
+        return metadata, metadata_path
+    end
+
+    setfenv(loader, {})
+    local ok, parsed = pcall(loader)
+    if ok and type(parsed) == "table" then
+        parsed.doc_path = parsed.doc_path or chapter_path
+        return parsed, metadata_path
+    end
+
+    return metadata, metadata_path
+end
+
+local function sortLuaKeys(left, right)
+    local left_type = type(left)
+    local right_type = type(right)
+    if left_type == right_type then
+        return tostring(left) < tostring(right)
+    end
+    return left_type < right_type
+end
+
+function SuwayomiPlugin:serializeLuaValue(value, indent)
+    indent = indent or 0
+    local value_type = type(value)
+    if value_type == "string" then
+        return string.format("%q", value)
+    end
+    if value_type == "number" or value_type == "boolean" then
+        return tostring(value)
+    end
+    if value_type ~= "table" then
+        return "nil"
+    end
+
+    local next_indent = indent + 4
+    local current_padding = string.rep(" ", indent)
+    local next_padding = string.rep(" ", next_indent)
+    local keys = {}
+    for key in pairs(value) do
+        table.insert(keys, key)
+    end
+    table.sort(keys, sortLuaKeys)
+
+    local lines = { "{" }
+    for _, key in ipairs(keys) do
+        local item = value[key]
+        if item ~= nil then
+            table.insert(lines, next_padding
+                .. "["
+                .. self:serializeLuaValue(key, 0)
+                .. "] = "
+                .. self:serializeLuaValue(item, next_indent)
+                .. ",")
+        end
+    end
+    table.insert(lines, current_padding .. "}")
+    return table.concat(lines, "\n")
+end
+
+function SuwayomiPlugin:saveKoreaderMetadataTable(metadata_path, metadata)
+    if not metadata_path then
+        return false
+    end
+
+    local metadata_dir = metadata_path:match("^(.*)/[^/]+$")
+    if metadata_dir and not self:ensureDirectory(metadata_dir) then
+        return false
+    end
+
+    local handle = io.open(metadata_path, "w")
+    if not handle then
+        return false
+    end
+
+    handle:write("return ", self:serializeLuaValue(metadata, 0), "\n")
+    handle:close()
+    return true
+end
+
+function SuwayomiPlugin:setKoreaderChapterReadState(chapter_path, is_read)
+    if not chapter_path or chapter_path == "" then
+        return false
+    end
+
+    local metadata, metadata_path = self:loadKoreaderMetadataTable(chapter_path)
+    metadata.doc_path = metadata.doc_path or chapter_path
+    metadata.summary = type(metadata.summary) == "table" and metadata.summary or {}
+
+    if is_read then
+        metadata.percent_finished = 1
+        metadata.summary.status = "complete"
+    else
+        metadata.percent_finished = 0
+        metadata.summary.status = nil
+    end
+
+    return self:saveKoreaderMetadataTable(metadata_path, metadata)
+end
+
 function SuwayomiPlugin:isKoreaderMetadataFinished(metadata_path)
     local handle = metadata_path and io.open(metadata_path, "r")
     if not handle then
@@ -455,6 +592,9 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
                 if item._suwayomi_is_read ~= true then
                     item.pending_read_sync = true
                 end
+            end
+            if chapter_exists and item.is_read == true and not metadata_finished then
+                self:setKoreaderChapterReadState(chapter_path, true)
             end
         end
 
@@ -591,6 +731,9 @@ end
 
 function SuwayomiPlugin:markChapterRead(manga, chapter)
     local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
+    if downloaded and chapter_path then
+        self:setKoreaderChapterReadState(chapter_path, true)
+    end
     self:upsertChapterLedgerEntry(manga, chapter, {
         path = chapter_path,
         read = true,
@@ -612,6 +755,9 @@ end
 
 function SuwayomiPlugin:markChapterUnread(manga, chapter)
     local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
+    if downloaded and chapter_path then
+        self:setKoreaderChapterReadState(chapter_path, false)
+    end
     local ledger = self:loadChapterLedger()
     local key = self:getChapterLedgerKey(manga, chapter)
     local entry = ledger[key]
