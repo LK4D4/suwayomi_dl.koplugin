@@ -921,19 +921,53 @@ function SuwayomiPlugin:getBulkChapterActions()
     }
 end
 
+function SuwayomiPlugin:pluralize(count, singular, plural)
+    if count == 1 then
+        return singular
+    end
+    return plural
+end
+
+function SuwayomiPlugin:formatBulkDownloadMessage(queued, skipped)
+    local parts = {}
+    if queued > 0 then
+        table.insert(parts, T(
+            self:pluralize(queued, _("Queued %1 selected chapter download."), _("Queued %1 selected chapter downloads.")),
+            queued
+        ))
+    else
+        table.insert(parts, _("No new downloads queued."))
+    end
+
+    if skipped > 0 then
+        table.insert(parts, T(
+            self:pluralize(skipped, _("Skipped %1 already downloaded or queued."), _("Skipped %1 already downloaded or queued.")),
+            skipped
+        ))
+    end
+    return table.concat(parts, " ")
+end
+
 function SuwayomiPlugin:enqueueSelectedChapterDownloads(manga, chapters, download_directory)
     local queued = 0
+    local skipped = 0
     for _, chapter in ipairs(chapters or {}) do
-        if self:getDownloadQueue():enqueue(manga, chapter, download_directory, { quiet_duplicate = true }) then
+        local status = self:getDownloadQueue():getStatus(manga, chapter)
+        local downloaded = self:isChapterDownloaded(manga, chapter)
+        if downloaded or (status and (status.state == "queued" or status.state == "downloading" or status.state == "downloaded" or status.state == "skipped")) then
+            skipped = skipped + 1
+        elseif self:getDownloadQueue():enqueue(manga, chapter, download_directory, { quiet_duplicate = true }) then
             queued = queued + 1
+        else
+            skipped = skipped + 1
         end
     end
 
     self:clearChapterSelection(true)
     self:refreshChapterMenu()
 
-    if queued > 0 then
-        self:showMessage(T(_("Queued %1 chapter downloads."), queued))
+    if queued > 0 or skipped > 0 then
+        self:showMessage(self:formatBulkDownloadMessage(queued, skipped))
     end
     return queued
 end
@@ -970,6 +1004,35 @@ function SuwayomiPlugin:formatActiveDownloadCount(count)
     return T(_("%1 downloads are still in progress."), count)
 end
 
+function SuwayomiPlugin:formatBulkDeleteMessage(deleted, canceled, missing, active)
+    local parts = {}
+    if deleted > 0 then
+        table.insert(parts, T(
+            self:pluralize(deleted, _("Deleted %1 selected chapter from device."), _("Deleted %1 selected chapters from device.")),
+            deleted
+        ))
+    end
+    if canceled > 0 then
+        table.insert(parts, T(
+            self:pluralize(canceled, _("Canceled %1 queued download."), _("Canceled %1 queued downloads.")),
+            canceled
+        ))
+    end
+    if missing > 0 then
+        table.insert(parts, T(
+            self:pluralize(missing, _("Skipped %1 not downloaded."), _("Skipped %1 not downloaded.")),
+            missing
+        ))
+    end
+    if active > 0 then
+        table.insert(parts, self:formatActiveDownloadCount(active))
+    end
+    if #parts == 0 then
+        return _("No selected chapters were deleted.")
+    end
+    return table.concat(parts, " ")
+end
+
 function SuwayomiPlugin:deleteSelectedChapters()
     if not self.current_chapter_context then
         return 0
@@ -983,6 +1046,8 @@ function SuwayomiPlugin:deleteSelectedChapters()
     end
 
     local deleted = 0
+    local canceled = 0
+    local missing = 0
     local active = 0
     for _, chapter in ipairs(chapters) do
         local ok, state = self:deleteChapterFromDeviceWithOptions(manga, chapter, {
@@ -992,23 +1057,22 @@ function SuwayomiPlugin:deleteSelectedChapters()
         })
         if ok then
             deleted = deleted + 1
+            if state == "queued" then
+                canceled = canceled + 1
+            end
         elseif state == "downloading" then
             active = active + 1
+        elseif state == "queued" then
+            canceled = canceled + 1
+        elseif state == "missing" then
+            missing = missing + 1
         end
     end
 
     self:clearChapterSelection(true)
     self:refreshChapterMenu()
 
-    if deleted > 0 then
-        local message = T(_("Deleted %1 selected chapters from device."), deleted)
-        if active > 0 then
-            message = message .. " " .. self:formatActiveDownloadCount(active)
-        end
-        self:showMessage(message)
-    elseif active > 0 then
-        self:showMessage(self:formatActiveDownloadCount(active))
-    end
+    self:showMessage(self:formatBulkDeleteMessage(deleted, canceled, missing, active))
     return deleted
 end
 

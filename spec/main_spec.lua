@@ -1033,6 +1033,66 @@ describe("suwayomi plugin", function()
         assert.is_true(menu_updates > 0)
     end)
 
+    it("reports queued and skipped counts for selected downloads", function()
+        local saved_queue = {}
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                getPartialPath = function(_, chapter_path)
+                    return chapter_path .. ".part"
+                end,
+                chapterExists = function(_, chapter_path)
+                    return chapter_path == "/books/Sousou no Frieren/Official_Vol. 1 Ch. 2.cbz"
+                end,
+                downloadChapterWithProgress = function() end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return saved_queue end,
+                saveDownloadQueue = function(_, jobs)
+                    saved_queue = jobs
+                    return jobs
+                end,
+                loadChapterLedger = function() return {} end,
+                saveChapterLedger = function(_, ledger) return ledger end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        local manga = { id = "m1", title = "Sousou no Frieren" }
+        local first = { id = "398", name = "Official_Vol. 1 Ch. 1" }
+        local downloaded = { id = "399", name = "Official_Vol. 1 Ch. 2" }
+        local queued = { id = "400", name = "Official_Vol. 1 Ch. 3" }
+        plugin.current_chapter_context = {
+            manga = manga,
+            chapters = { first, downloaded, queued },
+        }
+        plugin.selected_chapters = { ["m1:398"] = true, ["m1:399"] = true, ["m1:400"] = true }
+        plugin.selection_mode = true
+        plugin:getDownloadQueue():enqueue(manga, queued, "/books")
+
+        plugin:performBulkChapterAction("download_selected")
+
+        assert.are.equal(2, #saved_queue)
+        assert.is_false(plugin.selection_mode)
+        assert.are.equal("Queued 1 selected chapter download. Skipped 2 already downloaded or queued.", shown_messages[#shown_messages])
+    end)
+
     it("deletes selected downloaded chapters from bulk actions", function()
         local saved_ledger = {
             ["m1:398"] = {
@@ -1225,7 +1285,88 @@ describe("suwayomi plugin", function()
         assert.is_nil(plugin:getDownloadQueue():getStatus(manga, queued))
         assert.are.equal("downloading", plugin:getDownloadQueue():getStatus(manga, active).state)
         assert.is_true(existing["/books/Sousou no Frieren/Official_Vol. 1 Ch. 2.cbz"])
-        assert.are.equal("Deleted 1 selected chapters from device. 1 download is still in progress.", shown_messages[#shown_messages])
+        assert.are.equal("Deleted 1 selected chapter from device. Canceled 1 queued download. 1 download is still in progress.", shown_messages[#shown_messages])
+    end)
+
+    it("reports missing and active counts during bulk delete", function()
+        local removed_paths = {}
+        local original_remove = os.remove
+        local existing = {
+            ["/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz"] = true,
+            ["/books/Sousou no Frieren/Official_Vol. 1 Ch. 3.cbz"] = true,
+        }
+
+        os.remove = function(path)
+            table.insert(removed_paths, path)
+            existing[path] = nil
+            return true
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                getPartialPath = function(_, chapter_path)
+                    return chapter_path .. ".part"
+                end,
+                chapterExists = function(_, chapter_path)
+                    return existing[chapter_path] == true
+                end,
+                downloadChapterWithProgress = function() end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return {} end,
+                saveChapterLedger = function(_, ledger) return ledger end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        local manga = { id = "m1", title = "Sousou no Frieren" }
+        local downloaded = { id = "398", name = "Official_Vol. 1 Ch. 1" }
+        local missing = { id = "399", name = "Official_Vol. 1 Ch. 2" }
+        local active = { id = "400", name = "Official_Vol. 1 Ch. 3" }
+        plugin.current_chapter_context = {
+            manga = manga,
+            chapters = { downloaded, missing, active },
+        }
+        plugin.selected_chapters = { ["m1:398"] = true, ["m1:399"] = true, ["m1:400"] = true }
+        plugin.selection_mode = true
+
+        plugin:getDownloadQueue():enqueue(manga, active, "/books")
+        plugin:getDownloadQueue().active = {
+            key = "m1:400",
+            manga = manga,
+            chapter = active,
+            download_directory = "/books",
+            progress_path = "/books/.suwayomi_dl_progress_m1_400.txt",
+        }
+        plugin:getDownloadQueue():setStatus(manga, active, { state = "downloading" })
+
+        plugin:performBulkChapterAction("delete_selected")
+        os.remove = original_remove
+
+        assert.are.equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", removed_paths[1])
+        assert.are.equal("downloading", plugin:getDownloadQueue():getStatus(manga, active).state)
+        assert.are.equal(
+            "Deleted 1 selected chapter from device. Skipped 1 not downloaded. 1 download is still in progress.",
+            shown_messages[#shown_messages]
+        )
     end)
 
     it("marks selected chapters read and schedules one background sync", function()

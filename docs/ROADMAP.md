@@ -48,7 +48,7 @@ Goal: make the current Local Source reading loop feel complete and predictable.
 - [ ] Polish chapter status labels so `read`, `downloaded`, `queued`, and `failed` remain easy to scan
 - [ ] Decide and implement final `Mark as unread` behavior:
   Local only, or local plus Suwayomi sync
-- [ ] Improve small UX feedback after chapter actions where useful
+- [x] Improve small UX feedback after chapter actions where useful
 
 Exit criteria:
 - The plugin is comfortable for normal reading and library management inside KOReader without manual file cleanup.
