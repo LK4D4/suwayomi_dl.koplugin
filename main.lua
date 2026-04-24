@@ -1074,7 +1074,9 @@ function SuwayomiPlugin:deleteSelectedChapters()
     self:clearChapterSelection(true)
     self:refreshChapterMenu()
 
-    self:showMessage(self:formatBulkDeleteMessage(deleted, canceled, missing, active))
+    if missing > 0 or active > 0 then
+        self:showMessage(self:formatBulkDeleteMessage(deleted, 0, missing, active))
+    end
     return deleted
 end
 
@@ -1100,7 +1102,6 @@ function SuwayomiPlugin:markSelectedChaptersRead()
     self:clearChapterSelection(true)
     self:refreshChapterMenu()
     self:schedulePendingReadSync()
-    self:showMessage(T(_("Marked %1 selected chapters as read."), #chapters))
     return #chapters
 end
 
@@ -1124,7 +1125,6 @@ function SuwayomiPlugin:markSelectedChaptersUnread()
 
     self:clearChapterSelection(true)
     self:refreshChapterMenu()
-    self:showMessage(T(_("Marked %1 selected chapters as unread."), #chapters))
     return #chapters
 end
 
