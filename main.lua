@@ -734,12 +734,20 @@ end
 
 function SuwayomiPlugin:deleteChapterFromDeviceWithOptions(manga, chapter, options)
     options = options or {}
+    local cancelled, queue_state = self:getDownloadQueue():cancelPending(manga, chapter)
+    if queue_state == "downloading" then
+        if not options.quiet_active then
+            self:showMessage(_("This chapter is downloading. Wait for it to finish before deleting it."))
+        end
+        return false, "downloading"
+    end
+
     local downloaded, chapter_path = self:isChapterDownloaded(manga, chapter)
     if not downloaded or not chapter_path then
         if not options.quiet_missing then
             self:showMessage(_("This chapter is not downloaded."))
         end
-        return false
+        return false, cancelled and "queued" or "missing"
     end
 
     local metadata_path = self:getKoreaderMetadataPathForDocument(chapter_path)
@@ -769,7 +777,7 @@ function SuwayomiPlugin:deleteChapterFromDeviceWithOptions(manga, chapter, optio
     if not options.skip_refresh then
         self:refreshChapterMenu()
     end
-    return true
+    return true, cancelled and "queued" or "deleted"
 end
 
 function SuwayomiPlugin:markChapterRead(manga, chapter)
@@ -900,6 +908,13 @@ function SuwayomiPlugin:downloadSelectedChapters()
     return self:enqueueSelectedChapterDownloads(manga, chapters, download_directory)
 end
 
+function SuwayomiPlugin:formatActiveDownloadCount(count)
+    if count == 1 then
+        return _("1 download is still in progress.")
+    end
+    return T(_("%1 downloads are still in progress."), count)
+end
+
 function SuwayomiPlugin:deleteSelectedChapters()
     if not self.current_chapter_context then
         return 0
@@ -913,12 +928,17 @@ function SuwayomiPlugin:deleteSelectedChapters()
     end
 
     local deleted = 0
+    local active = 0
     for _, chapter in ipairs(chapters) do
-        if self:deleteChapterFromDeviceWithOptions(manga, chapter, {
+        local ok, state = self:deleteChapterFromDeviceWithOptions(manga, chapter, {
+            quiet_active = true,
             quiet_missing = true,
             skip_refresh = true,
-        }) then
+        })
+        if ok then
             deleted = deleted + 1
+        elseif state == "downloading" then
+            active = active + 1
         end
     end
 
@@ -926,7 +946,13 @@ function SuwayomiPlugin:deleteSelectedChapters()
     self:refreshChapterMenu()
 
     if deleted > 0 then
-        self:showMessage(T(_("Deleted %1 selected chapters from device."), deleted))
+        local message = T(_("Deleted %1 selected chapters from device."), deleted)
+        if active > 0 then
+            message = message .. " " .. self:formatActiveDownloadCount(active)
+        end
+        self:showMessage(message)
+    elseif active > 0 then
+        self:showMessage(self:formatActiveDownloadCount(active))
     end
     return deleted
 end

@@ -101,6 +101,33 @@ function DownloadQueue:setStatus(manga, chapter, status)
     self.onStatusChanged()
 end
 
+function DownloadQueue:cancelPending(manga, chapter)
+    local key = self:getKey(manga, chapter)
+    if self.active and (self.active.key or self:getKey(self.active.manga, self.active.chapter)) == key then
+        return false, "downloading"
+    end
+
+    local removed = false
+    local remaining = {}
+    for _, item in ipairs(self.items or {}) do
+        if (item.key or self:getKey(item.manga, item.chapter)) == key then
+            removed = true
+        else
+            table.insert(remaining, item)
+        end
+    end
+    self.items = remaining
+
+    if removed then
+        self:removePersistentJob(key)
+        self.statuses[key] = nil
+        self.onStatusChanged()
+        return true, "queued"
+    end
+
+    return false, nil
+end
+
 function DownloadQueue:formatChapterMenuText(chapter, status)
     local badges = {}
     if chapter and chapter.is_read == true then

@@ -249,6 +249,39 @@ describe("suwayomi_download_queue", function()
         assert.are.same({}, context.messages)
     end)
 
+    it("cancels a queued download before it starts", function()
+        local context = build_queue({ subprocess_done = false })
+        local manga = { id = "m1", title = "Sousou no Frieren" }
+        local chapter = { id = "398", name = "Official_Vol. 1 Ch. 1" }
+
+        assert.is_true(context.queue:enqueue(manga, chapter, "/books"))
+
+        local cancelled, state = context.queue:cancelPending(manga, chapter)
+
+        assert.is_true(cancelled)
+        assert.are.equal("queued", state)
+        assert.are.same({}, context.saved_queue())
+        assert.is_nil(context.queue:getStatus(manga, chapter))
+        assert.are.equal(0, #context.queue.items)
+    end)
+
+    it("does not cancel an active download", function()
+        local context = build_queue({ subprocess_done = false, skip_subprocess_callback = true })
+        local manga = { id = "m1", title = "Sousou no Frieren" }
+        local chapter = { id = "398", name = "Official_Vol. 1 Ch. 1" }
+
+        assert.is_true(context.queue:enqueue(manga, chapter, "/books"))
+        context.scheduled[1].callback()
+
+        local cancelled, state = context.queue:cancelPending(manga, chapter)
+
+        assert.is_false(cancelled)
+        assert.are.equal("downloading", state)
+        assert.are.equal("downloading", context.queue:getStatus(manga, chapter).state)
+        assert.are.equal(1, #context.saved_queue())
+        assert.are.equal("downloading", context.saved_queue()[1].state)
+    end)
+
     it("persists failed state when the downloader reports failure", function()
         local context = build_queue({
             downloader = {
