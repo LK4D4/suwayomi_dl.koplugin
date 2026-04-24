@@ -570,9 +570,53 @@ function SuwayomiPlugin:isChapterPathFinishedInKoreader(chapter_path)
     return self:isKoreaderMetadataFinished(self:getKoreaderMetadataPathForDocument(chapter_path))
 end
 
+function SuwayomiPlugin:getKoreaderHistoryPath()
+    if not SuwayomiSettings.getSettingsDir then
+        return nil
+    end
+
+    local settings_dir = SuwayomiSettings:getSettingsDir()
+    if not settings_dir or settings_dir == "" then
+        return nil
+    end
+
+    return settings_dir .. "/history.lua"
+end
+
+function SuwayomiPlugin:loadKoreaderHistoryPaths()
+    local history_path = self:getKoreaderHistoryPath()
+    local handle = history_path and io.open(history_path, "r")
+    if not handle then
+        return {}
+    end
+
+    local content = handle:read("*a") or ""
+    handle:close()
+
+    local loader = loadstring(content)
+    if not loader then
+        return {}
+    end
+
+    setfenv(loader, {})
+    local ok, history = pcall(loader)
+    if not ok or type(history) ~= "table" then
+        return {}
+    end
+
+    local paths = {}
+    for _, entry in pairs(history) do
+        if type(entry) == "table" and type(entry.file) == "string" and entry.file ~= "" then
+            paths[entry.file] = true
+        end
+    end
+    return paths
+end
+
 function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
     local SuwayomiDownloader = require("suwayomi_downloader")
     local download_directory = SuwayomiSettings:loadDownloadDirectory()
+    local history_paths = self:loadKoreaderHistoryPaths()
     local items = {}
 
     for _, chapter in ipairs(chapters or {}) do
@@ -587,7 +631,8 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
             _, chapter_path = SuwayomiDownloader:getTargetPath(download_directory, manga, item)
             chapter_exists = SuwayomiDownloader:chapterExists(chapter_path)
             local metadata_finished = chapter_exists and self:isChapterPathFinishedInKoreader(chapter_path)
-            if metadata_finished then
+            local history_read = chapter_exists and history_paths[chapter_path] == true
+            if metadata_finished or history_read then
                 item.is_read = true
                 if item._suwayomi_is_read ~= true then
                     item.pending_read_sync = true
