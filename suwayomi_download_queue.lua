@@ -6,6 +6,7 @@ DownloadQueue.__index = DownloadQueue
 
 DownloadQueue.POLL_INTERVAL_SECONDS = 0.5
 DownloadQueue.WATCHDOG_TIMEOUT_SECONDS = 30 * 60
+DownloadQueue.CHAPTER_TITLE_WITH_STATUS_MAX_CHARS = 58
 
 function DownloadQueue:new(options)
     options = options or {}
@@ -128,50 +129,91 @@ function DownloadQueue:cancelPending(manga, chapter)
     return false, nil
 end
 
-function DownloadQueue:formatChapterBadges(chapter, badges)
-    badges = badges or {}
-    if #badges == 0 then
+function DownloadQueue:splitUtf8Chars(text)
+    local chars = {}
+    text = tostring(text or "")
+    local index = 1
+    while index <= #text do
+        local byte = text:byte(index)
+        local length = 1
+        if byte and byte >= 0xF0 then
+            length = 4
+        elseif byte and byte >= 0xE0 then
+            length = 3
+        elseif byte and byte >= 0xC0 then
+            length = 2
+        end
+        table.insert(chars, text:sub(index, index + length - 1))
+        index = index + length
+    end
+    return chars
+end
+
+function DownloadQueue:shortenChapterTitle(title, reserved_chars)
+    local max_chars = self.CHAPTER_TITLE_WITH_STATUS_MAX_CHARS - (reserved_chars or 0)
+    if max_chars < 12 then
+        max_chars = 12
+    end
+
+    local chars = self:splitUtf8Chars(title)
+    if #chars <= max_chars then
+        return title
+    end
+
+    local shortened = {}
+    for index = 1, max_chars - 1 do
+        table.insert(shortened, chars[index])
+    end
+    table.insert(shortened, "…")
+    return table.concat(shortened)
+end
+
+function DownloadQueue:formatChapterStatusSymbols(chapter, symbols)
+    symbols = symbols or {}
+    if #symbols == 0 then
         return chapter.name
     end
-    return "[" .. table.concat(badges, "] [") .. "] " .. chapter.name
+    local suffix = table.concat(symbols, " ")
+    local title = self:shortenChapterTitle(chapter.name, #self:splitUtf8Chars(suffix) + 2)
+    return title .. "  " .. suffix
 end
 
 function DownloadQueue:formatChapterMenuText(chapter, status)
-    local badges = {}
+    local symbols = {}
     if chapter and chapter.is_read == true then
-        table.insert(badges, _("read"))
+        table.insert(symbols, "✓")
     end
 
     if not status then
-        return self:formatChapterBadges(chapter, badges)
+        return self:formatChapterStatusSymbols(chapter, symbols)
     end
     if status.state == "queued" then
-        table.insert(badges, _("queued"))
-        return self:formatChapterBadges(chapter, badges)
+        table.insert(symbols, "⏳")
+        return self:formatChapterStatusSymbols(chapter, symbols)
     end
     if status.state == "downloading" then
         if status.total and status.total > 0 and status.current then
-            table.insert(badges, T(_("downloading %1/%2"), status.current, status.total))
-            return self:formatChapterBadges(chapter, badges)
+            table.insert(symbols, T(_("↓ %1/%2"), status.current, status.total))
+            return self:formatChapterStatusSymbols(chapter, symbols)
         end
-        table.insert(badges, _("downloading"))
-        return self:formatChapterBadges(chapter, badges)
+        table.insert(symbols, "↓")
+        return self:formatChapterStatusSymbols(chapter, symbols)
     end
     if status.state == "downloaded" or status.state == "skipped" then
-        table.insert(badges, _("downloaded"))
-        return self:formatChapterBadges(chapter, badges)
+        table.insert(symbols, "↓")
+        return self:formatChapterStatusSymbols(chapter, symbols)
     end
     if status.state == "read" then
-        if #badges == 0 then
-            table.insert(badges, _("read"))
+        if #symbols == 0 then
+            table.insert(symbols, "✓")
         end
-        return self:formatChapterBadges(chapter, badges)
+        return self:formatChapterStatusSymbols(chapter, symbols)
     end
     if status.state == "failed" then
-        table.insert(badges, _("download failed"))
-        return self:formatChapterBadges(chapter, badges)
+        table.insert(symbols, "⚠")
+        return self:formatChapterStatusSymbols(chapter, symbols)
     end
-    return self:formatChapterBadges(chapter, badges)
+    return self:formatChapterStatusSymbols(chapter, symbols)
 end
 
 function DownloadQueue:readProgress(progress_path)
