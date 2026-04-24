@@ -1509,7 +1509,7 @@ describe("suwayomi plugin", function()
         assert.is_nil(saved_ledger["m1:399"].pending_read_sync)
     end)
 
-    it("marks selected chapters unread locally", function()
+    it("marks selected chapters unread and schedules one background sync", function()
         local saved_ledger = {
             ["m1:398"] = {
                 manga_id = "m1",
@@ -1529,7 +1529,17 @@ describe("suwayomi plugin", function()
                 pending_read_sync = true,
             },
         }
+        local marked_ids = {}
         local menu_updates = 0
+
+        package.preload.suwayomi_api = function()
+            return {
+                markChapterUnread = function(_, chapter_id)
+                    table.insert(marked_ids, chapter_id)
+                    return { ok = true, chapter = { id = chapter_id, is_read = false } }
+                end,
+            }
+        end
 
         package.preload.suwayomi_downloader = function()
             return {
@@ -1560,6 +1570,7 @@ describe("suwayomi plugin", function()
         end
 
         package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
         package.loaded.suwayomi_downloader = nil
         package.loaded.suwayomi_settings = nil
 
@@ -1583,14 +1594,26 @@ describe("suwayomi plugin", function()
         plugin:performBulkChapterAction("mark_unread_selected")
 
         assert.is_false(saved_ledger["m1:398"].read)
-        assert.is_nil(saved_ledger["m1:398"].pending_read_sync)
+        assert.is_true(saved_ledger["m1:398"].pending_read_sync)
+        assert.is_false(saved_ledger["m1:398"].pending_read_state)
         assert.is_equal("/books/Sousou no Frieren/Official_Vol. 1 Ch. 1.cbz", saved_ledger["m1:398"].path)
-        assert.is_nil(saved_ledger["m1:399"])
+        assert.is_false(saved_ledger["m1:399"].read)
+        assert.is_true(saved_ledger["m1:399"].pending_read_sync)
+        assert.is_false(saved_ledger["m1:399"].pending_read_state)
         assert.is_false(plugin.current_chapter_context.chapters[1].is_read)
         assert.is_false(plugin.current_chapter_context.chapters[2].is_read)
         assert.is_false(plugin.selection_mode)
         assert.are.equal(1, menu_updates)
         assert.are.same({}, shown_messages)
+
+        run_scheduled_callbacks()
+
+        table.sort(marked_ids)
+        assert.are.same({ "398", "399" }, marked_ids)
+        assert.is_nil(saved_ledger["m1:398"].pending_read_sync)
+        assert.is_nil(saved_ledger["m1:398"].pending_read_state)
+        assert.is_nil(saved_ledger["m1:399"].pending_read_sync)
+        assert.is_nil(saved_ledger["m1:399"].pending_read_state)
     end)
 
     it("opens a downloaded chapter from the chapter actions menu", function()

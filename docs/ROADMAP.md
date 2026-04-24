@@ -23,17 +23,16 @@ Implemented already:
 - [x] Chapter actions: `Download`
 - [x] Chapter actions: `Delete from device`
 - [x] Chapter actions: `Mark as read`
-- [x] Chapter actions: `Mark as unread` (local/plugin state)
+- [x] Chapter actions: `Mark as unread`
 - [x] Chapter selection mode
 - [x] Read-state merge from Suwayomi, local ledger, and KOReader sidecar metadata
-- [x] Background retry for pending read syncs
+- [x] Background retry for pending read/unread syncs
 - [x] Backgrounded `Mark as read` sync to avoid blocking the UI
 - [x] App Store installation path
 
 Known limitations:
 - [x] Only Local Source is considered supported right now
 - [x] Bulk actions currently start with selected chapter downloads only
-- [x] `Mark as unread` does not sync unread state back to Suwayomi yet
 - [x] Non-Local Source reading/downloading is not considered production-ready yet
 
 ## Phase 1: Finish the Local Source MVP
@@ -46,8 +45,8 @@ Goal: make the current Local Source reading loop feel complete and predictable.
 - [x] Add bulk `Delete from device`
 - [x] Add bulk `Mark as read`
 - [x] Polish chapter status labels so `read`, `downloaded`, `queued`, and `failed` remain easy to scan
-- [ ] Decide and implement final `Mark as unread` behavior:
-  Local only, or local plus Suwayomi sync
+- [x] Decide and implement final `Mark as unread` behavior:
+  Local plus Suwayomi sync
 - [x] Improve small UX feedback after chapter actions where useful
 
 Exit criteria:
@@ -73,8 +72,8 @@ Goal: make read state trustworthy across KOReader and Suwayomi.
 
 - [ ] Add manual `Sync read state now`
 - [ ] Add a ledger reconciliation sweep for downloaded chapters
-- [ ] Decide whether `Mark as unread` should sync back to Suwayomi
-- [ ] If yes, implement unread sync mutation flow
+- [x] Decide whether `Mark as unread` should sync back to Suwayomi
+- [x] If yes, implement unread sync mutation flow
 - [ ] Improve diagnostics for read-state conflicts and sync failures
 
 Exit criteria:

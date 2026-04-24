@@ -20,7 +20,7 @@ This plugin is experimental and still under active development.
 - Download individual chapters as `.cbz`
 - Chapter actions menu with `Open`, `Download`, `Delete from device`, and `Mark as read` / `Mark as unread`
 - Read-state tracking from Suwayomi, the local plugin ledger, and KOReader sidecar metadata
-- Background retry of pending read syncs when Suwayomi is temporarily unavailable
+- Background retry of pending read/unread syncs when Suwayomi is temporarily unavailable
 
 Current limitation:
 - The practical, tested flow currently targets the Suwayomi **Local Source**. Other Suwayomi sources may browse correctly, but downloading and reading workflows outside Local Source are not yet considered supported.

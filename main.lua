@@ -349,6 +349,7 @@ function SuwayomiPlugin:upsertChapterLedgerEntry(manga, chapter, updates)
         read = existing.read == true,
         path = existing.path,
         pending_read_sync = existing.pending_read_sync == true or nil,
+        pending_read_state = existing.pending_read_state,
     }
 
     for update_key, value in pairs(updates or {}) do
@@ -378,20 +379,31 @@ function SuwayomiPlugin:mergeChaptersWithReadLedger(manga, chapters)
         local key = self:getChapterLedgerKey(manga, item)
         local entry = ledger[key]
         local suwayomi_is_read = item.is_read == true
-        local ledger_read_is_pending = entry and entry.read == true and entry.pending_read_sync == true
-        local is_read = suwayomi_is_read or ledger_read_is_pending
+        local pending_read_state
+        if entry and entry.pending_read_sync == true then
+            if entry.pending_read_state ~= nil then
+                pending_read_state = entry.pending_read_state == true
+            else
+                pending_read_state = entry.read == true
+            end
+        end
+        local is_read = pending_read_state
+        if is_read == nil then
+            is_read = suwayomi_is_read
+        end
         item._suwayomi_is_read = suwayomi_is_read
         item.is_read = is_read
 
-        if is_read then
+        if is_read or pending_read_state ~= nil then
             ledger[key] = {
                 manga_id = tostring(manga.id or ""),
                 manga_title = manga.title,
                 chapter_id = tostring(item.id or ""),
                 chapter_name = item.name,
-                read = true,
+                read = is_read == true,
                 path = entry and entry.path or nil,
-                pending_read_sync = suwayomi_is_read and nil or (entry and entry.pending_read_sync == true or nil),
+                pending_read_sync = pending_read_state ~= nil and true or nil,
+                pending_read_state = pending_read_state,
             }
             changed = true
         elseif entry and entry.read == true then
@@ -840,6 +852,7 @@ function SuwayomiPlugin:markChapterRead(manga, chapter, options)
         path = chapter_path,
         read = true,
         pending_read_sync = true,
+        pending_read_state = true,
     })
 
     if self.current_chapter_context and self.current_chapter_context.chapters then
@@ -865,21 +878,12 @@ function SuwayomiPlugin:markChapterUnread(manga, chapter, options)
     if downloaded and chapter_path then
         self:setKoreaderChapterReadState(chapter_path, false)
     end
-    local ledger = self:loadChapterLedger()
-    local key = self:getChapterLedgerKey(manga, chapter)
-    local entry = ledger[key]
-
-    if entry then
-        entry.read = nil
-        entry.pending_read_sync = nil
-        entry.path = entry.path or (downloaded and chapter_path or nil)
-        if not entry.path then
-            ledger[key] = nil
-        else
-            ledger[key] = entry
-        end
-        self:saveChapterLedger(ledger)
-    end
+    self:upsertChapterLedgerEntry(manga, chapter, {
+        path = chapter_path,
+        read = false,
+        pending_read_sync = true,
+        pending_read_state = false,
+    })
 
     if self.current_chapter_context and self.current_chapter_context.chapters then
         for _, current in ipairs(self.current_chapter_context.chapters) do
@@ -892,6 +896,9 @@ function SuwayomiPlugin:markChapterUnread(manga, chapter, options)
 
     if not options.skip_refresh then
         self:refreshChapterMenu()
+    end
+    if not options.skip_schedule then
+        self:schedulePendingReadSync()
     end
     return true
 end
@@ -1123,11 +1130,13 @@ function SuwayomiPlugin:markSelectedChaptersUnread()
     for _, chapter in ipairs(chapters) do
         self:markChapterUnread(manga, chapter, {
             skip_refresh = true,
+            skip_schedule = true,
         })
     end
 
     self:clearChapterSelection(true)
     self:refreshChapterMenu()
+    self:schedulePendingReadSync()
     return #chapters
 end
 
@@ -1223,6 +1232,7 @@ function SuwayomiPlugin:markLedgerEntryRead(entry)
 
     ledger[key].read = true
     ledger[key].pending_read_sync = true
+    ledger[key].pending_read_state = true
     self:saveChapterLedger(ledger)
 
     self:schedulePendingReadSync()
@@ -1230,7 +1240,7 @@ function SuwayomiPlugin:markLedgerEntryRead(entry)
 end
 
 function SuwayomiPlugin:syncPendingReadMarks(credentials)
-    if not SuwayomiAPI.markChapterRead then
+    if not SuwayomiAPI.markChapterRead and not SuwayomiAPI.markChapterUnread then
         return 0
     end
 
@@ -1244,12 +1254,29 @@ function SuwayomiPlugin:syncPendingReadMarks(credentials)
     local changed = false
 
     for key, entry in pairs(ledger) do
-        if entry.read == true and entry.pending_read_sync == true and entry.chapter_id then
-            local result = SuwayomiAPI.markChapterRead(credentials, entry.chapter_id)
+        if entry.pending_read_sync == true and entry.chapter_id then
+            local desired_read_state = entry.pending_read_state
+            if desired_read_state == nil then
+                desired_read_state = entry.read == true
+            end
+
+            local result
+            if desired_read_state == true and SuwayomiAPI.markChapterRead then
+                result = SuwayomiAPI.markChapterRead(credentials, entry.chapter_id)
+            elseif SuwayomiAPI.markChapterUnread then
+                result = SuwayomiAPI.markChapterUnread(credentials, entry.chapter_id)
+            else
+                result = { ok = false }
+            end
+
             if result.ok then
                 ledger[key].pending_read_sync = nil
+                ledger[key].pending_read_state = nil
                 synced = synced + 1
                 changed = true
+                if desired_read_state ~= true and not ledger[key].path then
+                    ledger[key] = nil
+                end
             end
         end
     end
