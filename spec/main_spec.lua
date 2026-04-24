@@ -757,6 +757,105 @@ describe("suwayomi plugin", function()
         assert.are.equal("Mark as read", shown_actions_menu.actions[2].text)
     end)
 
+    it("toggles chapter selection on hold", function()
+        local shown_chapter_menu
+        local menu_updates = 0
+        local fake_chapter_menu = {
+            updateItems = function()
+                menu_updates = menu_updates + 1
+            end,
+        }
+
+        package.preload.suwayomi_api = function()
+            return {
+                fetchSources = function()
+                    return { ok = true, sources = { { id = "s1", name = "MangaDex", lang = "en" } } }
+                end,
+                fetchMangaForSource = function()
+                    return { ok = true, manga = { { id = "m1", title = "Sousou no Frieren" } } }
+                end,
+                fetchChaptersForManga = function()
+                    return {
+                        ok = true,
+                        chapters = {
+                            { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = false },
+                            { id = "399", name = "Official_Vol. 1 Ch. 2", is_read = false },
+                        },
+                    }
+                end,
+            }
+        end
+
+        package.preload.suwayomi_downloader = function()
+            return {
+                getTargetPath = function(_, download_directory, manga, chapter)
+                    return download_directory .. "/" .. manga.title,
+                        download_directory .. "/" .. manga.title .. "/" .. chapter.name .. ".cbz"
+                end,
+                chapterExists = function()
+                    return false
+                end,
+            }
+        end
+
+        package.preload.suwayomi_ui = function()
+            return {
+                showSourcesMenu = function(sources, onSelect)
+                    onSelect(sources[1])
+                end,
+                showMangaMenu = function(manga, onSelect)
+                    onSelect(manga[1])
+                end,
+                showChapterMenu = function(options, onSelect, onHold)
+                    shown_chapter_menu = options
+                    onHold(options.chapters[1])
+                    return fake_chapter_menu
+                end,
+                updateChapterMenu = function(_, options)
+                    shown_chapter_menu = options
+                    fake_chapter_menu:updateItems()
+                end,
+                showDirectoryChooser = function() end,
+                showLoginDialog = function() end,
+                showLanguageMenu = function() end,
+            }
+        end
+
+        package.preload.suwayomi_settings = function()
+            return {
+                load = function()
+                    return { server_url = "https://suwayomi.example", username = "alice", password = "secret", auth_method = "basic_auth" }
+                end,
+                loadSourceLanguages = function() return { "en" } end,
+                loadDownloadDirectory = function() return "/books" end,
+                loadDownloadQueue = function() return {} end,
+                saveDownloadQueue = function(_, jobs) return jobs end,
+                loadChapterLedger = function() return {} end,
+                saveChapterLedger = function(_, ledger) return ledger end,
+            }
+        end
+
+        package.loaded.main = nil
+        package.loaded.suwayomi_api = nil
+        package.loaded.suwayomi_downloader = nil
+        package.loaded.suwayomi_ui = nil
+        package.loaded.suwayomi_settings = nil
+
+        local plugin_class = require("main")
+        local plugin = plugin_class{}
+        plugin:browseSuwayomi()
+
+        assert.are.equal("[x] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.are.equal("Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
+        assert.is_true(plugin:isChapterSelected("m1", "398"))
+        assert.are.equal(1, menu_updates)
+
+        plugin:toggleChapterSelection({ id = "m1" }, { id = "398", name = "Official_Vol. 1 Ch. 1" })
+
+        assert.are.equal("Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.is_false(plugin:isChapterSelected("m1", "398"))
+    end)
+
     it("opens a downloaded chapter from the chapter actions menu", function()
         local opened_path
 

@@ -10,6 +10,7 @@ function SuwayomiUI.buildChapterMenuTable(chapter_list, onSelectCallback)
     for _, chapter in ipairs(chapter_list) do
         table.insert(menu_table, {
             text = chapter.menu_text or chapter.name,
+            chapter = chapter,
             callback = function()
                 if onSelectCallback then onSelectCallback(chapter) end
             end
@@ -67,7 +68,7 @@ function SuwayomiUI.showMangaMenu(manga_list, onSelectCallback)
     UIManager:show(menu)
 end
 
-function SuwayomiUI.showChapterMenu(chapter_list, onSelectCallback)
+function SuwayomiUI.showChapterMenu(chapter_list, onSelectCallback, onHoldCallback)
     local options = {}
     if type(chapter_list) == "table" and chapter_list.chapters then
         options = chapter_list
@@ -78,6 +79,14 @@ function SuwayomiUI.showChapterMenu(chapter_list, onSelectCallback)
         title = options.title or _("Suwayomi Chapters"),
         item_table = SuwayomiUI.buildChapterMenuTable(chapter_list, onSelectCallback),
     }
+    if onHoldCallback then
+        menu.onMenuHold = function(_, entry)
+            if entry and entry.chapter then
+                onHoldCallback(entry.chapter)
+            end
+            return true
+        end
+    end
     local UIManager = require("ui/uimanager")
     UIManager:show(menu)
     return menu
@@ -116,12 +125,20 @@ function SuwayomiUI.showChapterActionsMenu(options, onSelectCallback)
     return dialog
 end
 
-function SuwayomiUI.updateChapterMenu(menu, options, onSelectCallback)
+function SuwayomiUI.updateChapterMenu(menu, options, onSelectCallback, onHoldCallback)
     if not menu then
         return
     end
 
     menu.item_table = SuwayomiUI.buildChapterMenuTable(options.chapters or {}, onSelectCallback)
+    if onHoldCallback then
+        menu.onMenuHold = function(_, entry)
+            if entry and entry.chapter then
+                onHoldCallback(entry.chapter)
+            end
+            return true
+        end
+    end
     if menu.updateItems then
         menu:updateItems(nil, true)
     end

@@ -238,6 +238,8 @@ function SuwayomiPlugin:showChaptersForManga(manga)
     }
     self.current_chapter_menu = SuwayomiUI.showChapterMenu(self.current_chapter_options, function(chapter)
         self:showChapterActions(manga, chapter)
+    end, function(chapter)
+        self:toggleChapterSelection(manga, chapter)
     end)
 end
 
@@ -259,6 +261,28 @@ end
 
 function SuwayomiPlugin:formatChapterMenuText(chapter, status)
     return self:getDownloadQueue():formatChapterMenuText(chapter, status)
+end
+
+function SuwayomiPlugin:getChapterSelectionKey(manga, chapter)
+    return tostring(manga.id or manga.title or "") .. ":" .. tostring(chapter.id or chapter.name or "")
+end
+
+function SuwayomiPlugin:isChapterSelected(manga, chapter)
+    local manga_id = type(manga) == "table" and (manga.id or manga.title) or manga
+    local chapter_id = type(chapter) == "table" and (chapter.id or chapter.name) or chapter
+    local key = tostring(manga_id or "") .. ":" .. tostring(chapter_id or "")
+    return self.selected_chapters and self.selected_chapters[key] == true
+end
+
+function SuwayomiPlugin:toggleChapterSelection(manga, chapter)
+    self.selected_chapters = self.selected_chapters or {}
+    local key = self:getChapterSelectionKey(manga, chapter)
+    if self.selected_chapters[key] then
+        self.selected_chapters[key] = nil
+    else
+        self.selected_chapters[key] = true
+    end
+    self:refreshChapterMenu()
 end
 
 function SuwayomiPlugin:loadChapterLedger()
@@ -413,6 +437,9 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
             end
         end
         item.menu_text = self:formatChapterMenuText(item, status)
+        if self:isChapterSelected(manga, item) then
+            item.menu_text = "[x] " .. item.menu_text
+        end
 
         if chapter_exists then
             self:upsertChapterLedgerEntry(manga, item, {
@@ -732,6 +759,8 @@ function SuwayomiPlugin:refreshChapterMenu()
     if SuwayomiUI.updateChapterMenu then
         SuwayomiUI.updateChapterMenu(self.current_chapter_menu, options, function(chapter)
             self:showChapterActions(self.current_chapter_context.manga, chapter)
+        end, function(chapter)
+            self:toggleChapterSelection(self.current_chapter_context.manga, chapter)
         end)
     elseif self.current_chapter_menu and self.current_chapter_menu.updateItems then
         self.current_chapter_menu:updateItems(nil, true)

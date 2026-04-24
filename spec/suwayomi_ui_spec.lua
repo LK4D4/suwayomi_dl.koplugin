@@ -136,6 +136,7 @@ describe("suwayomi_ui", function()
     it("shows a chapter menu", function()
         local ui = require("suwayomi_ui")
         local selected = {}
+        local held = {}
 
         ui.showChapterMenu({
             title = "Sousou no Frieren",
@@ -145,6 +146,8 @@ describe("suwayomi_ui", function()
             },
         }, function(chapter)
             table.insert(selected, chapter)
+        end, function(chapter)
+            table.insert(held, chapter)
         end)
 
         assert.are.equal("Sousou no Frieren", shown_dialog.title)
@@ -153,11 +156,15 @@ describe("suwayomi_ui", function()
 
         shown_dialog.item_table[1].callback()
         shown_dialog.item_table[2].callback()
+        shown_dialog:onMenuHold(shown_dialog.item_table[1])
 
         assert.are.same({
             { id = "c1", name = "Chapter 1", menu_text = "Chapter 1 [downloaded]" },
             { id = "c2", name = "Chapter 2" },
         }, selected)
+        assert.are.same({
+            { id = "c1", name = "Chapter 1", menu_text = "Chapter 1 [downloaded]" },
+        }, held)
     end)
 
     it("shows a chapter actions menu", function()

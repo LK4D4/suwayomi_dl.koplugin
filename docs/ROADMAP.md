@@ -24,6 +24,7 @@ Implemented already:
 - [x] Chapter actions: `Delete from device`
 - [x] Chapter actions: `Mark as read`
 - [x] Chapter actions: `Mark as unread` (local/plugin state)
+- [x] Chapter selection mode
 - [x] Read-state merge from Suwayomi, local ledger, and KOReader sidecar metadata
 - [x] Background retry for pending read syncs
 - [x] Backgrounded `Mark as read` sync to avoid blocking the UI
@@ -40,7 +41,7 @@ Known limitations:
 
 Goal: make the current Local Source reading loop feel complete and predictable.
 
-- [ ] Add chapter selection mode
+- [x] Add chapter selection mode
 - [ ] Add bulk chapter actions entry point
 - [ ] Add bulk `Download`
 - [ ] Add bulk `Delete from device`
