@@ -237,7 +237,7 @@ function SuwayomiPlugin:showChaptersForManga(manga)
         chapters = self:buildChapterMenuItems(manga, chapters),
     }
     self.current_chapter_menu = SuwayomiUI.showChapterMenu(self.current_chapter_options, function(chapter)
-        self:showChapterActions(manga, chapter)
+        self:handleChapterTap(manga, chapter)
     end, function(chapter)
         self:toggleChapterSelection(manga, chapter)
     end)
@@ -274,6 +274,16 @@ function SuwayomiPlugin:isChapterSelected(manga, chapter)
     return self.selected_chapters and self.selected_chapters[key] == true
 end
 
+function SuwayomiPlugin:getSelectedChapterCount()
+    local count = 0
+    for _, selected in pairs(self.selected_chapters or {}) do
+        if selected then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 function SuwayomiPlugin:toggleChapterSelection(manga, chapter)
     self.selected_chapters = self.selected_chapters or {}
     local key = self:getChapterSelectionKey(manga, chapter)
@@ -282,7 +292,17 @@ function SuwayomiPlugin:toggleChapterSelection(manga, chapter)
     else
         self.selected_chapters[key] = true
     end
+    self.selection_mode = self:getSelectedChapterCount() > 0
     self:refreshChapterMenu()
+end
+
+function SuwayomiPlugin:handleChapterTap(manga, chapter)
+    if self.selection_mode then
+        self:toggleChapterSelection(manga, chapter)
+        return
+    end
+
+    self:showChapterActions(manga, chapter)
 end
 
 function SuwayomiPlugin:loadChapterLedger()
@@ -437,8 +457,12 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
             end
         end
         item.menu_text = self:formatChapterMenuText(item, status)
-        if self:isChapterSelected(manga, item) then
-            item.menu_text = "[x] " .. item.menu_text
+        if self.selection_mode then
+            if self:isChapterSelected(manga, item) then
+                item.menu_text = "[x] " .. item.menu_text
+            else
+                item.menu_text = "[ ] " .. item.menu_text
+            end
         end
 
         if chapter_exists then
@@ -758,7 +782,7 @@ function SuwayomiPlugin:refreshChapterMenu()
 
     if SuwayomiUI.updateChapterMenu then
         SuwayomiUI.updateChapterMenu(self.current_chapter_menu, options, function(chapter)
-            self:showChapterActions(self.current_chapter_context.manga, chapter)
+            self:handleChapterTap(self.current_chapter_context.manga, chapter)
         end, function(chapter)
             self:toggleChapterSelection(self.current_chapter_context.manga, chapter)
         end)

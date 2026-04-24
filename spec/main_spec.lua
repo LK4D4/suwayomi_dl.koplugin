@@ -757,8 +757,11 @@ describe("suwayomi plugin", function()
         assert.are.equal("Mark as read", shown_actions_menu.actions[2].text)
     end)
 
-    it("toggles chapter selection on hold", function()
+    it("uses tap to toggle chapters while selection mode is active", function()
         local shown_chapter_menu
+        local tap_chapter
+        local hold_chapter
+        local shown_actions_menu
         local menu_updates = 0
         local fake_chapter_menu = {
             updateItems = function()
@@ -808,12 +811,16 @@ describe("suwayomi plugin", function()
                 end,
                 showChapterMenu = function(options, onSelect, onHold)
                     shown_chapter_menu = options
-                    onHold(options.chapters[1])
+                    tap_chapter = onSelect
+                    hold_chapter = onHold
                     return fake_chapter_menu
                 end,
                 updateChapterMenu = function(_, options)
                     shown_chapter_menu = options
                     fake_chapter_menu:updateItems()
+                end,
+                showChapterActionsMenu = function(options)
+                    shown_actions_menu = options
                 end,
                 showDirectoryChooser = function() end,
                 showLoginDialog = function() end,
@@ -845,15 +852,39 @@ describe("suwayomi plugin", function()
         local plugin = plugin_class{}
         plugin:browseSuwayomi()
 
+        hold_chapter(shown_chapter_menu.chapters[1])
+
         assert.are.equal("[x] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
-        assert.are.equal("Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
+        assert.are.equal("[ ] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
+        assert.is_true(plugin.selection_mode)
         assert.is_true(plugin:isChapterSelected("m1", "398"))
         assert.are.equal(1, menu_updates)
 
+        tap_chapter(shown_chapter_menu.chapters[2])
+
+        assert.is_nil(shown_actions_menu)
+        assert.are.equal("[x] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.are.equal("[x] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
+        assert.is_true(plugin:isChapterSelected("m1", "399"))
+        assert.are.equal(2, menu_updates)
+
         plugin:toggleChapterSelection({ id = "m1" }, { id = "398", name = "Official_Vol. 1 Ch. 1" })
 
-        assert.are.equal("Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.are.equal("[ ] Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.are.equal("[x] Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
         assert.is_false(plugin:isChapterSelected("m1", "398"))
+        assert.is_true(plugin.selection_mode)
+
+        plugin:toggleChapterSelection({ id = "m1" }, { id = "399", name = "Official_Vol. 1 Ch. 2" })
+
+        assert.are.equal("Official_Vol. 1 Ch. 1", shown_chapter_menu.chapters[1].menu_text)
+        assert.are.equal("Official_Vol. 1 Ch. 2", shown_chapter_menu.chapters[2].menu_text)
+        assert.is_false(plugin:isChapterSelected("m1", "399"))
+        assert.is_false(plugin.selection_mode)
+
+        tap_chapter(shown_chapter_menu.chapters[1])
+
+        assert.are.equal("Official_Vol. 1 Ch. 1", shown_actions_menu.title)
     end)
 
     it("opens a downloaded chapter from the chapter actions menu", function()
