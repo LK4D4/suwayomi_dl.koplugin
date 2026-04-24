@@ -284,7 +284,29 @@ function SuwayomiPlugin:getSelectedChapterCount()
     return count
 end
 
+function SuwayomiPlugin:getSelectedChapters(manga, chapters)
+    local selected = {}
+    for _, chapter in ipairs(chapters or {}) do
+        if self:isChapterSelected(manga, chapter) then
+            table.insert(selected, chapter)
+        end
+    end
+    return selected
+end
+
+function SuwayomiPlugin:clearChapterSelection(skip_refresh)
+    self.selected_chapters = {}
+    self.selection_mode = false
+    if not skip_refresh then
+        self:refreshChapterMenu()
+    end
+end
+
 function SuwayomiPlugin:toggleChapterSelection(manga, chapter)
+    if chapter and chapter._suwayomi_bulk_actions then
+        return
+    end
+
     self.selected_chapters = self.selected_chapters or {}
     local key = self:getChapterSelectionKey(manga, chapter)
     if self.selected_chapters[key] then
@@ -297,6 +319,11 @@ function SuwayomiPlugin:toggleChapterSelection(manga, chapter)
 end
 
 function SuwayomiPlugin:handleChapterTap(manga, chapter)
+    if chapter and chapter._suwayomi_bulk_actions then
+        self:showBulkChapterActions(manga)
+        return
+    end
+
     if self.selection_mode then
         self:toggleChapterSelection(manga, chapter)
         return
@@ -575,6 +602,13 @@ function SuwayomiPlugin:buildChapterMenuItems(manga, chapters)
     local download_directory = SuwayomiSettings:loadDownloadDirectory()
     local items = {}
 
+    if self.selection_mode then
+        table.insert(items, {
+            _suwayomi_bulk_actions = true,
+            menu_text = T(_("Actions for %1 selected"), self:getSelectedChapterCount()),
+        })
+    end
+
     for _, chapter in ipairs(chapters or {}) do
         local item = {}
         for key, value in pairs(chapter) do
@@ -805,6 +839,84 @@ function SuwayomiPlugin:performChapterAction(manga, chapter, action_id)
         return self:markChapterUnread(manga, chapter)
     end
     return false
+end
+
+function SuwayomiPlugin:getBulkChapterActions()
+    return {
+        { id = "download_selected", text = _("Download selected") },
+        { id = "clear_selection", text = _("Clear selection") },
+    }
+end
+
+function SuwayomiPlugin:enqueueSelectedChapterDownloads(manga, chapters, download_directory)
+    local queued = 0
+    for _, chapter in ipairs(chapters or {}) do
+        if self:getDownloadQueue():enqueue(manga, chapter, download_directory) then
+            queued = queued + 1
+        end
+    end
+
+    self:clearChapterSelection(true)
+    self:refreshChapterMenu()
+
+    if queued > 0 then
+        self:showMessage(T(_("Queued %1 chapter downloads."), queued))
+    end
+    return queued
+end
+
+function SuwayomiPlugin:downloadSelectedChapters()
+    if not self.current_chapter_context then
+        return 0
+    end
+
+    local manga = self.current_chapter_context.manga
+    local chapters = self:getSelectedChapters(manga, self.current_chapter_context.chapters)
+    if #chapters == 0 then
+        self:showMessage(_("No chapters selected."))
+        return 0
+    end
+
+    local download_directory = SuwayomiSettings:loadDownloadDirectory()
+    if not download_directory or download_directory == "" then
+        SuwayomiUI.showDirectoryChooser(function(path)
+            local saved_path = SuwayomiSettings:saveDownloadDirectory(path)
+            self:showMessage(T(_("Suwayomi download directory saved: %1"), saved_path))
+            self:enqueueSelectedChapterDownloads(manga, chapters, saved_path)
+        end)
+        return 0
+    end
+
+    return self:enqueueSelectedChapterDownloads(manga, chapters, download_directory)
+end
+
+function SuwayomiPlugin:performBulkChapterAction(action_id)
+    if action_id == "download_selected" then
+        self:downloadSelectedChapters()
+        return true
+    end
+    if action_id == "clear_selection" then
+        self:clearChapterSelection()
+        return true
+    end
+    return false
+end
+
+function SuwayomiPlugin:showBulkChapterActions(manga)
+    if not SuwayomiUI.showChapterActionsMenu then
+        self:downloadSelectedChapters()
+        return
+    end
+
+    local count = self:getSelectedChapterCount()
+    local options = {
+        title = T(_("%1 selected chapters"), count),
+        actions = self:getBulkChapterActions(),
+    }
+
+    SuwayomiUI.showChapterActionsMenu(options, function(action)
+        self:performBulkChapterAction(action.id)
+    end)
 end
 
 function SuwayomiPlugin:showChapterActions(manga, chapter)

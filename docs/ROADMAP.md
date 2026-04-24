@@ -32,8 +32,7 @@ Implemented already:
 
 Known limitations:
 - [x] Only Local Source is considered supported right now
-- [x] Bulk selection is not implemented yet
-- [x] Bulk download workflow is not implemented yet
+- [x] Bulk actions currently start with selected chapter downloads only
 - [x] `Mark as unread` does not sync unread state back to Suwayomi yet
 - [x] Non-Local Source reading/downloading is not considered production-ready yet
 
@@ -42,8 +41,8 @@ Known limitations:
 Goal: make the current Local Source reading loop feel complete and predictable.
 
 - [x] Add chapter selection mode
-- [ ] Add bulk chapter actions entry point
-- [ ] Add bulk `Download`
+- [x] Add bulk chapter actions entry point
+- [x] Add bulk `Download`
 - [ ] Add bulk `Delete from device`
 - [ ] Add bulk `Mark as read`
 - [ ] Polish chapter status labels so `read`, `downloaded`, `queued`, and `failed` remain easy to scan
