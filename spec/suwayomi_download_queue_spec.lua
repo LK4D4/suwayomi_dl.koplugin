@@ -217,10 +217,29 @@ describe("suwayomi_download_queue", function()
         local context = build_queue()
 
         assert.are.equal(
-            "Official_Vol. 1 Ch. 1 [read] [downloaded]",
+            "[read] [downloaded] Official_Vol. 1 Ch. 1",
             context.queue:formatChapterMenuText(
                 { id = "398", name = "Official_Vol. 1 Ch. 1", is_read = true },
                 { state = "downloaded" }
+            )
+        )
+    end)
+
+    it("puts status badges before long chapter names", function()
+        local context = build_queue()
+
+        assert.are.equal(
+            "[read] [downloading 3/12] Official_Vol. 25 Ch. 126 A Very Long Chapter Title",
+            context.queue:formatChapterMenuText(
+                { id = "398", name = "Official_Vol. 25 Ch. 126 A Very Long Chapter Title", is_read = true },
+                { state = "downloading", current = 3, total = 12 }
+            )
+        )
+        assert.are.equal(
+            "[download failed] Official_Vol. 25 Ch. 127 Another Long Chapter Title",
+            context.queue:formatChapterMenuText(
+                { id = "399", name = "Official_Vol. 25 Ch. 127 Another Long Chapter Title" },
+                { state = "failed" }
             )
         )
     end)

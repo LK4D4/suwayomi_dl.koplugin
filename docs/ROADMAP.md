@@ -45,7 +45,7 @@ Goal: make the current Local Source reading loop feel complete and predictable.
 - [x] Add bulk `Download`
 - [x] Add bulk `Delete from device`
 - [x] Add bulk `Mark as read`
-- [ ] Polish chapter status labels so `read`, `downloaded`, `queued`, and `failed` remain easy to scan
+- [x] Polish chapter status labels so `read`, `downloaded`, `queued`, and `failed` remain easy to scan
 - [ ] Decide and implement final `Mark as unread` behavior:
   Local only, or local plus Suwayomi sync
 - [x] Improve small UX feedback after chapter actions where useful

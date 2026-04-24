@@ -128,6 +128,14 @@ function DownloadQueue:cancelPending(manga, chapter)
     return false, nil
 end
 
+function DownloadQueue:formatChapterBadges(chapter, badges)
+    badges = badges or {}
+    if #badges == 0 then
+        return chapter.name
+    end
+    return "[" .. table.concat(badges, "] [") .. "] " .. chapter.name
+end
+
 function DownloadQueue:formatChapterMenuText(chapter, status)
     local badges = {}
     if chapter and chapter.is_read == true then
@@ -135,41 +143,35 @@ function DownloadQueue:formatChapterMenuText(chapter, status)
     end
 
     if not status then
-        if #badges == 0 then
-            return chapter.name
-        end
-        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
+        return self:formatChapterBadges(chapter, badges)
     end
     if status.state == "queued" then
         table.insert(badges, _("queued"))
-        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
+        return self:formatChapterBadges(chapter, badges)
     end
     if status.state == "downloading" then
         if status.total and status.total > 0 and status.current then
             table.insert(badges, T(_("downloading %1/%2"), status.current, status.total))
-            return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
+            return self:formatChapterBadges(chapter, badges)
         end
         table.insert(badges, _("downloading"))
-        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
+        return self:formatChapterBadges(chapter, badges)
     end
     if status.state == "downloaded" or status.state == "skipped" then
         table.insert(badges, _("downloaded"))
-        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
+        return self:formatChapterBadges(chapter, badges)
     end
     if status.state == "read" then
         if #badges == 0 then
             table.insert(badges, _("read"))
         end
-        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
+        return self:formatChapterBadges(chapter, badges)
     end
     if status.state == "failed" then
-        table.insert(badges, _("failed"))
-        return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
+        table.insert(badges, _("download failed"))
+        return self:formatChapterBadges(chapter, badges)
     end
-    if #badges == 0 then
-        return chapter.name
-    end
-    return chapter.name .. " [" .. table.concat(badges, "] [") .. "]"
+    return self:formatChapterBadges(chapter, badges)
 end
 
 function DownloadQueue:readProgress(progress_path)
